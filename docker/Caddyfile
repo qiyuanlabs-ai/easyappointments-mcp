@@ -1,0 +1,17 @@
+{
+	# TLS is normally ended by a load balancer or a reverse proxy in front of this container.
+	# Set SERVER_NAME to your domain (for example mcp.example.com) to let Caddy get a certificate itself.
+	frankenphp
+	admin off
+}
+
+{$SERVER_NAME::8080} {
+	root * /app/public
+	encode zstd gzip
+	header {
+		-Server
+		X-Content-Type-Options nosniff
+		Referrer-Policy strict-origin-when-cross-origin
+	}
+	php_server
+}

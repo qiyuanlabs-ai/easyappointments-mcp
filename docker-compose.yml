@@ -1,0 +1,78 @@
+# A complete local demo: Easy!Appointments 1.6.1 with a fictional clinic, a mail catcher,
+# and this MCP server. See README.md, "Run the demo locally".
+#
+#   cp .env.docker.example .env.docker   # then set APP_KEY and EA_API_TOKEN
+#   docker compose up -d --build
+#   sh demo/setup.sh
+#
+# MCP server:          http://localhost:8000/mcp
+# Easy!Appointments:   http://localhost:8080   (administrator / administrator)
+# Emails it sends:     http://localhost:8025
+
+services:
+  ea-db:
+    image: mysql:8.0
+    environment:
+      MYSQL_ROOT_PASSWORD: ${EA_DB_ROOT_PASSWORD:-change-me}
+      MYSQL_DATABASE: easyappointments
+    volumes:
+      - ea-db:/var/lib/mysql
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-p${EA_DB_ROOT_PASSWORD:-change-me}"]
+      interval: 5s
+      retries: 30
+
+  mailpit:
+    # Catches every email Easy!Appointments sends, so the demo never mails a real address.
+    image: axllent/mailpit:latest
+    ports:
+      - "127.0.0.1:8025:8025"
+
+  ea:
+    image: alextselegidis/easyappointments:1.6.1
+    depends_on:
+      ea-db:
+        condition: service_healthy
+    environment:
+      BASE_URL: http://localhost:8080
+      DB_HOST: ea-db
+      DB_NAME: easyappointments
+      DB_USERNAME: root
+      DB_PASSWORD: ${EA_DB_ROOT_PASSWORD:-change-me}
+      MAIL_PROTOCOL: smtp
+      MAIL_SMTP_HOST: mailpit
+      MAIL_SMTP_PORT: 1025
+      MAIL_SMTP_AUTH: "0"
+      MAIL_SMTP_CRYPTO: ""
+      MAIL_FROM_ADDRESS: demo@example.test
+      MAIL_FROM_NAME: Maple Street Physio (demo)
+    ports:
+      - "127.0.0.1:8080:80"
+
+  mcp:
+    build: .
+    image: ea-mcp-server:local
+    env_file: .env.docker
+    environment:
+      APP_URL: http://localhost:8000
+      SERVER_NAME: ":8080"
+    depends_on:
+      - ea
+    ports:
+      - "127.0.0.1:8000:8080"
+    volumes:
+      - mcp-data:/data/app
+
+  mcp-scheduler:
+    # Prunes old call logs and expired OAuth tokens once a day.
+    image: ea-mcp-server:local
+    env_file: .env.docker
+    depends_on:
+      - mcp
+    volumes:
+      - mcp-data:/data/app
+    command: ["php", "artisan", "schedule:work"]
+
+volumes:
+  ea-db:
+  mcp-data:
