@@ -20,6 +20,9 @@ use Illuminate\Support\Facades\RateLimiter;
  */
 class EaClient
 {
+    /** Requests already paid for from the shared budget by reserve(). */
+    private int $reserved = 0;
+
     public function __construct(
         private readonly EaConnection $connection,
         private readonly EaRequestLog $log,
@@ -241,6 +244,11 @@ class EaClient
         return $this->mapAppointment($this->get("/appointments/$id"));
     }
 
+    public function deleteCustomer(int $id): void
+    {
+        $this->send('DELETE', "/customers/$id");
+    }
+
     public function createAppointment(array $data): array
     {
         return $this->mapAppointment($this->send('POST', '/appointments', $data));
@@ -309,9 +317,24 @@ class EaClient
         }
     }
 
+    /**
+     * Takes room for several requests from the shared budget at once, so a change that needs
+     * them all is refused before it starts instead of running out halfway.
+     */
+    public function reserve(int $requests): void
+    {
+        $this->spend($requests);
+        $this->reserved += $requests;
+    }
+
     private function send(string $method, string $path, array $payload = []): mixed
     {
-        $this->spend(1);
+        if ($this->reserved > 0) {
+            $this->reserved--;
+        } else {
+            $this->spend(1);
+        }
+
         $started = hrtime(true);
         $request = $this->configure(Http::baseUrl($this->connection->apiUrl()));
 

@@ -34,6 +34,9 @@ abstract class WriteTool extends EaTool
     /** How long a claimed key may stay unfinished before we stop assuming the first call is still running. */
     private const PENDING_SECONDS = 120;
 
+    /** Requests a change may send while holding its slot lock: the fresh check, the writes and a clean-up. */
+    private const MAX_REQUESTS_UNDER_LOCK = 6;
+
     abstract protected function plan(Request $request, EaClient $ea, bool $confirming): PlannedChange;
 
     /** The input fields this tool adds to confirm, confirmation_token and idempotency_key. */
@@ -128,6 +131,16 @@ abstract class WriteTool extends EaTool
         return new ToolResult($result, 'ok', $result['appointment']['id'] ?? $change->appointmentId);
     }
 
+    /**
+     * How long a slot lock lives if its holder dies. It must outlast the slowest change: the
+     * fresh slot check and every write under the lock may each take the full Easy!Appointments
+     * timeout, so the lock lasts that many timeouts plus a margin.
+     */
+    public static function lockSeconds(): int
+    {
+        return max(1, (int) config('easyappointments.timeout')) * self::MAX_REQUESTS_UNDER_LOCK + 30;
+    }
+
     /** Runs the change while holding the lock on its slot, so changes to one provider's day run one at a time. */
     private function underLock(?string $name, Closure $callback): array
     {
@@ -136,7 +149,7 @@ abstract class WriteTool extends EaTool
         }
 
         try {
-            return Cache::lock('slot:'.$name, 60)->block(config('easyappointments.slot_lock_wait_seconds'), $callback);
+            return Cache::lock('slot:'.$name, self::lockSeconds())->block(config('easyappointments.slot_lock_wait_seconds'), $callback);
         } catch (LockTimeoutException) {
             throw new ToolFailure('Another change to the same provider and day is in progress. Try again in a few seconds.');
         }
@@ -149,7 +162,7 @@ abstract class WriteTool extends EaTool
         }
 
         if (! $existing->isCompleted()) {
-            throw new ToolFailure($existing->created_at->gt(now()->subSeconds(self::PENDING_SECONDS))
+            throw new ToolFailure($existing->created_at->gt(now()->subSeconds(max(self::PENDING_SECONDS, self::lockSeconds())))
                 ? 'A call with this idempotency_key is still being processed. Wait a few seconds, then call again with the same key to get its result.'
                 : 'An earlier call with this idempotency_key did not finish, so it is not clear whether the change was made. Check with list_appointments before trying again with a new idempotency_key.');
         }

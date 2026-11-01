@@ -2,6 +2,7 @@
 
 namespace App\Mcp\Tools;
 
+use App\Ea\EaApiException;
 use App\Ea\EaClient;
 use Illuminate\Contracts\JsonSchema\JsonSchema;
 use Laravel\Mcp\Request;
@@ -48,7 +49,7 @@ class BookAppointment extends WriteTool
             'new_customer' => ['nullable', 'array'],
             'new_customer.first_name' => ['required_with:new_customer', 'string', 'max:100'],
             'new_customer.last_name' => ['required_with:new_customer', 'string', 'max:100'],
-            'new_customer.email' => ['required_with:new_customer', 'email', 'max:255'],
+            'new_customer.email' => ['required_with:new_customer', 'email:filter', 'max:255'],
             'new_customer.phone' => ['nullable', 'string', 'max:50'],
             'new_customer.address' => ['nullable', 'string', 'max:255'],
             'new_customer.city' => ['nullable', 'string', 'max:100'],
@@ -109,15 +110,36 @@ class BookAppointment extends WriteTool
         }
 
         return new PlannedChange($preview, function () use ($ea, $service, $provider, $start, $customer, $newCustomer, $notes, $timezone) {
-            $customer ??= $ea->createCustomer($newCustomer);
+            $createdCustomer = $customer === null;
 
-            $appointment = $ea->createAppointment([
-                'start' => $start->format('Y-m-d H:i:00'),
-                'customerId' => $customer['id'],
-                'providerId' => $provider['id'],
-                'serviceId' => $service['id'],
-                'notes' => $notes,
-            ]);
+            if ($createdCustomer) {
+                // Room for the customer, the booking and a clean-up, so the shared budget cannot
+                // run out between them and leave a new customer with no booking.
+                $ea->reserve(3);
+                $customer = $ea->createCustomer($newCustomer);
+            }
+
+            try {
+                $appointment = $ea->createAppointment([
+                    'start' => $start->format('Y-m-d H:i:00'),
+                    'customerId' => $customer['id'],
+                    'providerId' => $provider['id'],
+                    'serviceId' => $service['id'],
+                    'notes' => $notes,
+                ]);
+            } catch (EaApiException $e) {
+                // Easy!Appointments answered and did not book, so remove the customer made for this
+                // booking. If the answer was lost, the booking may exist, so the customer stays.
+                if ($createdCustomer && $e->status !== null) {
+                    try {
+                        $ea->deleteCustomer($customer['id']);
+                    } catch (EaApiException) {
+                        // Best effort: a leftover customer record is harmless.
+                    }
+                }
+
+                throw $e;
+            }
 
             $ea->forgetAvailability($provider['id'], $start->format('Y-m-d'));
 

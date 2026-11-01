@@ -20,14 +20,18 @@ class Mask
         return $arguments;
     }
 
-    /** Masks every email address inside free text, such as an error message that quotes one. */
+    /**
+     * Masks every email address inside free text, such as an error message that quotes one.
+     * Deliberately loose: any run of characters around an @ counts, so addresses with
+     * non-ASCII characters (josé@example.com) are caught too.
+     */
     public static function text(string $text): string
     {
         return preg_replace_callback(
-            '/[A-Za-z0-9._%+\-]+@[A-Za-z0-9.\-]+\.[A-Za-z]{2,}/',
+            '/[^\s@"\'<>(),;:\[\]]+@[^\s@"\'<>(),;:\[\]]+/',
             fn (array $m) => self::string($m[0]),
             $text,
-        ) ?? $text;
+        ) ?? '[message hidden]';
     }
 
     public static function string(string $value): string

@@ -47,6 +47,12 @@ class FakeEasyAppointments
     /** When true, creating an appointment saves it but the answer never arrives (a timeout). */
     public bool $loseWriteAnswers = false;
 
+    /** When set, creating an appointment fails with this HTTP status and saves nothing. */
+    public ?int $refuseAppointmentsWith = null;
+
+    /** Called with "METHOD /path" before each request is answered. */
+    public ?\Closure $onRequest = null;
+
     /** When set, every request fails with this HTTP status. */
     public ?int $failWith = null;
 
@@ -76,6 +82,10 @@ class FakeEasyAppointments
         $method = $request->method();
         $this->requests[] = "$method $path";
 
+        if ($this->onRequest !== null) {
+            ($this->onRequest)("$method $path");
+        }
+
         if ($this->failWith !== null) {
             return Http::response(['message' => 'Failure'], $this->failWith);
         }
@@ -92,6 +102,7 @@ class FakeEasyAppointments
             $path === '/availabilities' => Http::response($this->openTimes((int) $query['providerId'], (string) $query['date'])),
             $path === '/customers' && $method === 'GET' => Http::response($this->searchCustomers((string) ($query['q'] ?? ''))),
             $path === '/customers' && $method === 'POST' => $this->createCustomer($request->data()),
+            $method === 'DELETE' && (bool) preg_match('#^/customers/(\d+)$#', $path, $m) => $this->deleteCustomer((int) $m[1]),
             (bool) preg_match('#^/customers/(\d+)$#', $path, $m) => isset($this->customers[(int) $m[1]])
                 ? Http::response($this->customers[(int) $m[1]]) : Http::response(['message' => 'Not found'], 404),
             $path === '/appointments' && $method === 'GET' => Http::response($this->listAppointments($query)),
@@ -171,8 +182,23 @@ class FakeEasyAppointments
      * Like the real API (Appointments_api_v1::store in 1.6.1), this saves whatever it is given:
      * it never checks the slot is free, so double bookings are the MCP server's job to prevent.
      */
+    private function deleteCustomer(int $id)
+    {
+        if (! isset($this->customers[$id])) {
+            return Http::response(['message' => 'Not found'], 404);
+        }
+
+        unset($this->customers[$id]);
+
+        return Http::response(null, 204);
+    }
+
     private function createAppointment(array $data)
     {
+        if ($this->refuseAppointmentsWith !== null) {
+            return Http::response(['message' => 'Failure'], $this->refuseAppointmentsWith);
+        }
+
         $appointment = $this->addAppointment($data);
 
         if ($this->loseWriteAnswers) {

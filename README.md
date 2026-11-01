@@ -104,7 +104,9 @@ Add `https://your-server/mcp` as a custom connector (Claude: Settings > Connecto
 - Client registration is open, as MCP expects, but limited: redirect URIs must be `https` (or `http` on a loopback address) with no fragment or user info, registration is rate limited per IP (`MCP_REGISTRATIONS_PER_HOUR`, 10), and clients that are never used are removed after a day and unused ones after 90 days.
 - The consent screen marks the client's name as unverified (any app can pick its own name), shows the host the person will be sent to, and warns when that host is not a known AI assistant (`MCP_KNOWN_CLIENT_HOSTS`).
 - Names, emails, phone numbers, addresses, notes and search text are masked in the call log. Easy!Appointments error messages that echo customer records are stripped, and any email left in an error is masked, before it reaches the assistant, the call log or the application log.
-- `APP_DEBUG` is off in `.env.example`. `ea:connect` reads the API token from a prompt or `EA_API_TOKEN`, so it does not end up in shell history or the process list.
+- Sign-in attempts are limited per IP and, separately, per account, so guesses spread over many IPs still hit a limit. Session cookies are HTTPS-only whenever `APP_URL` is https.
+- A booking for a new customer takes budget for all its requests before it starts, and removes the customer it created if Easy!Appointments then refuses the booking.
+- `APP_ENV=production` and `APP_DEBUG=false` in `.env.example`. `ea:connect` reads the API token from a prompt or `EA_API_TOKEN`, so it does not end up in shell history or the process list.
 - Logs are kept 90 days by default (`MCP_LOG_RETENTION_DAYS`).
 
 ## Known limits
@@ -119,7 +121,8 @@ Add `https://your-server/mcp` as a custom connector (Claude: Settings > Connecto
 
 ```sh
 composer install
-cp .env.example .env && php artisan key:generate && php artisan passport:keys && php artisan migrate
+cp .env.example .env && sed -i 's/^APP_ENV=production/APP_ENV=local/' .env
+php artisan key:generate && php artisan passport:keys && php artisan migrate
 php artisan test
 vendor/bin/pint
 ```

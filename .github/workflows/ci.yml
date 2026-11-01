@@ -22,6 +22,8 @@ jobs:
           extensions: pdo_sqlite, intl
           coverage: none
       - run: composer install --no-interaction --prefer-dist --no-progress
+      - name: Check dependencies for known vulnerabilities
+        run: composer audit --no-interaction
       - run: cp .env.example .env && php artisan key:generate && php artisan passport:keys
       - run: vendor/bin/pint --test
       - run: php artisan test

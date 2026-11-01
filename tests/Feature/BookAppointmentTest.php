@@ -128,6 +128,15 @@ class BookAppointmentTest extends TestCase
         $this->assertStringContainsString('already exists', $preview['customer_note']);
     }
 
+    public function test_an_email_with_characters_easyappointments_cannot_take_is_refused_up_front(): void
+    {
+        $booking = ['new_customer' => ['first_name' => 'José', 'last_name' => 'Test', 'email' => 'josé@example.com']] + $this->booking;
+        unset($booking['customer_id']);
+
+        EasyAppointmentsServer::tool(BookAppointment::class, $booking)->assertHasErrors(['valid email']);
+        $this->assertSame([], $this->ea->writes());
+    }
+
     public function test_required_customer_fields_are_asked_for_at_preview(): void
     {
         $this->ea->settings['require_phone_number'] = '1';

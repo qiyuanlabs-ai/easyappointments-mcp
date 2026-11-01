@@ -7,9 +7,11 @@ use App\Mcp\Tools\BookAppointment;
 use App\Mcp\Tools\FindOpenSlots;
 use App\Mcp\Tools\ListServices;
 use App\Mcp\Tools\RescheduleAppointment;
+use App\Mcp\Tools\WriteTool;
 use App\Models\IdempotencyKey;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\Cache;
+use Illuminate\Support\Facades\RateLimiter;
 use Tests\Support\ConnectsMcp;
 use Tests\TestCase;
 
@@ -131,5 +133,49 @@ class ConfirmSafetyTest extends TestCase
         config(['easyappointments.request_budget' => 2]);
 
         EasyAppointmentsServer::tool(ListServices::class)->assertHasErrors(['Too many requests to Easy!Appointments from everyone using this server']);
+    }
+
+    public function test_a_refused_booking_removes_the_customer_it_created(): void
+    {
+        $booking = ['new_customer' => ['first_name' => 'Taylor', 'last_name' => 'Test', 'email' => 'taylor@example.test']] + $this->booking;
+        unset($booking['customer_id']);
+        $token = $this->preview($booking);
+        $this->ea->refuseAppointmentsWith = 500;
+
+        $this->confirm($booking, $token, 'key-refused-1')->assertHasErrors(['internal error']);
+
+        $this->assertSame(['POST /customers', 'POST /appointments', 'DELETE /customers/3'], $this->ea->writes());
+        $this->assertSame([1, 2], array_keys($this->ea->customers));
+    }
+
+    public function test_a_booking_for_a_new_customer_does_not_start_without_budget_for_all_its_requests(): void
+    {
+        $booking = ['new_customer' => ['first_name' => 'Taylor', 'last_name' => 'Test', 'email' => 'taylor@example.test']] + $this->booking;
+        unset($booking['customer_id']);
+        $token = $this->preview($booking);
+
+        // Right after the fresh slot check, only two requests are left in the shared budget.
+        $budget = config('easyappointments.request_budget');
+        $key = 'ea-budget:'.$this->user->ea_connection_id;
+        $this->ea->onRequest = function (string $request) use ($budget, $key) {
+            if (str_starts_with($request, 'GET /availabilities')) {
+                RateLimiter::clear($key);
+                RateLimiter::increment($key, 120, $budget - 2);
+            }
+        };
+
+        $this->confirm($booking, $token, 'key-budget-1')->assertHasErrors(['Too many requests to Easy!Appointments']);
+
+        $this->assertSame([], $this->ea->writes(), 'No customer is created when the booking could not follow.');
+        $this->assertSame(0, IdempotencyKey::count());
+    }
+
+    public function test_the_slot_lock_outlasts_the_slowest_change(): void
+    {
+        config(['easyappointments.timeout' => 10]);
+        $this->assertSame(90, WriteTool::lockSeconds());
+
+        config(['easyappointments.timeout' => 30]);
+        $this->assertSame(210, WriteTool::lockSeconds());
     }
 }

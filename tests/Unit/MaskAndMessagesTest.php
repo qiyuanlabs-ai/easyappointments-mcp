@@ -37,6 +37,9 @@ class MaskAndMessagesTest extends TestCase
         $this->assertSame('invalid data', EaClient::cleanMessage(null));
         // Some messages quote the customer's email; it must not reach the model, the log or the CSV.
         $this->assertSame('The provided email address is already in use: o***@example.test', EaClient::cleanMessage('The provided email address is already in use: olivia.bennett@example.test.'));
+        // Addresses with non-ASCII characters are masked too.
+        $this->assertSame('The provided email address is already in use: j***@example.com', EaClient::cleanMessage('The provided email address is already in use: josé@example.com.'));
+        $this->assertSame('Duplicate (j***@exämple.de, m***@example.test)', Mask::text('Duplicate (josé.müller@exämple.de, mia+1@example.test)'));
     }
 
     public function test_access_levels_cap_and_allow(): void
