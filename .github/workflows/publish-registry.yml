@@ -1,0 +1,52 @@
+name: Publish to MCP Registry
+
+# Run by hand once the public demo in server.json is live.
+# Needs an environment named "registry" holding the secret MCP_PRIVATE_KEY: the hex Ed25519
+# private key whose public key is in the qiyuanlabs.ai TXT record (see docs/deploy-demo.md).
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    environment: registry
+    env:
+      MCP_PUBLISHER_VERSION: v1.8.1
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Check the demo answers like an MCP server
+        run: |
+          url="$(jq -r '.remotes[0].url' server.json)"
+          status="$(curl -s -o /dev/null -w '%{http_code}' -X POST "$url" -H 'Content-Type: application/json' -H 'Accept: application/json, text/event-stream' -d '{}')"
+          echo "$url answered $status"
+          test "$status" = "401"
+
+      - name: Install cosign
+        uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6 # v4.1.2
+
+      - name: Download and verify mcp-publisher
+        run: |
+          set -euo pipefail
+          os="$(uname -s | tr '[:upper:]' '[:lower:]')"
+          arch="$(uname -m | sed 's/x86_64/amd64/;s/aarch64/arm64/')"
+          archive="mcp-publisher_${os}_${arch}.tar.gz"
+          base_url="https://github.com/modelcontextprotocol/registry/releases/download/${MCP_PUBLISHER_VERSION}"
+          curl --fail --location --silent --show-error --output "$archive" "$base_url/$archive"
+          curl --fail --location --silent --show-error --output "$archive.sigstore.json" "$base_url/$archive.sigstore.json"
+          cosign verify-blob \
+            --bundle "$archive.sigstore.json" \
+            --certificate-identity "https://github.com/modelcontextprotocol/registry/.github/workflows/release.yml@refs/tags/${MCP_PUBLISHER_VERSION}" \
+            --certificate-oidc-issuer "https://token.actions.githubusercontent.com" \
+            "$archive"
+          tar xzf "$archive" mcp-publisher
+          rm -f "$archive" "$archive.sigstore.json"
+
+      - name: Authenticate with the qiyuanlabs.ai DNS record
+        run: ./mcp-publisher login dns --domain qiyuanlabs.ai --private-key "${{ secrets.MCP_PRIVATE_KEY }}"
+
+      - name: Publish
+        run: ./mcp-publisher publish

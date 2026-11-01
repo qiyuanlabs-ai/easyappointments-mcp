@@ -5,7 +5,10 @@
 #   0 3 * * * cd /opt/ea-mcp-server && sh demo/reset.sh >> /var/log/ea-demo-reset.log 2>&1
 set -e
 
+set -a
 . ./.env.docker
+[ -f .env ] && . ./.env
+set +a
 DB_PASSWORD="${EA_DB_ROOT_PASSWORD:-change-me}"
 
 docker compose exec -T ea-db mysql -uroot -p"$DB_PASSWORD" easyappointments 2>/dev/null <<'SQL'
@@ -19,6 +22,6 @@ DELETE FROM ea_services;
 SET FOREIGN_KEY_CHECKS = 1;
 SQL
 
-docker compose exec -T mcp php demo/seed-ea.php http://ea administrator administrator
+docker compose exec -T mcp php demo/seed-ea.php http://ea
 docker compose exec -T mcp php artisan cache:clear >/dev/null
 echo "Demo reset at $(date -u +%FT%TZ)"

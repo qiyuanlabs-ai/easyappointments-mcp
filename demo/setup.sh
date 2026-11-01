@@ -3,7 +3,10 @@
 # seeds the fictional clinic and links the MCP server to it. Run from the repository root.
 set -e
 
+set -a
 . ./.env.docker
+[ -f .env ] && . ./.env
+set +a
 : "${EA_API_TOKEN:?Set EA_API_TOKEN in .env.docker}"
 DB_PASSWORD="${EA_DB_ROOT_PASSWORD:-change-me}"
 
@@ -19,7 +22,7 @@ docker compose exec -T ea-db mysql -uroot -p"$DB_PASSWORD" easyappointments \
   -e "UPDATE ea_settings SET value='$EA_API_TOKEN' WHERE name='api_token'" 2>/dev/null
 
 echo "Seeding the fictional clinic (Easy!Appointments rate limits its API, so this can take a few minutes)..."
-docker compose exec -T mcp php demo/seed-ea.php http://ea administrator administrator
+docker compose exec -T mcp php demo/seed-ea.php http://ea
 
 docker compose exec -T mcp php artisan ea:connect "Maple Street Physio (demo)" http://ea --token="$EA_API_TOKEN"
 docker compose exec -T mcp php artisan ea:user "${DEMO_EMAIL:-frontdesk@demo.test}" --name="Front desk (demo)" \

@@ -4,6 +4,7 @@
  * Seeds a fresh Easy!Appointments instance with a fictional physio clinic for demos.
  *
  * Usage: php demo/seed-ea.php http://localhost:8080 administrator administrator
+ *    or: EA_API_TOKEN=... php demo/seed-ea.php http://localhost:8080   (uses the API token instead)
  *
  * Everything here is made up: names, emails (example.test) and phone numbers (555).
  * It deletes the sample service, provider and customer that "console install" creates.
@@ -16,11 +17,16 @@ function call(string $method, string $path, ?array $body = null): mixed
 {
     global $api, $user, $pass;
     $ch = curl_init($api.$path);
+    if (! getenv('EA_API_TOKEN')) {
+        curl_setopt($ch, CURLOPT_USERPWD, "$user:$pass");
+    }
     curl_setopt_array($ch, [
         CURLOPT_CUSTOMREQUEST => $method,
         CURLOPT_RETURNTRANSFER => true,
-        CURLOPT_USERPWD => "$user:$pass",
-        CURLOPT_HTTPHEADER => ['Content-Type: application/json', 'Accept: application/json'],
+        CURLOPT_HTTPHEADER => array_merge(
+            ['Content-Type: application/json', 'Accept: application/json'],
+            getenv('EA_API_TOKEN') ? ['Authorization: Bearer '.getenv('EA_API_TOKEN')] : [],
+        ),
     ]);
     if ($body !== null) {
         curl_setopt($ch, CURLOPT_POSTFIELDS, json_encode($body));

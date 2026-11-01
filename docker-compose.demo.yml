@@ -1,0 +1,38 @@
+# Overrides for the public demo server. Use together with docker-compose.yml by putting
+#   COMPOSE_FILE=docker-compose.yml:docker-compose.demo.yml
+# in the .env file next to them. See docs/deploy-demo.md.
+#
+# The MCP server gets its own HTTPS certificate from Let's Encrypt for DEMO_HOST.
+# Easy!Appointments and the mail catcher stay on 127.0.0.1; reach them through an SSH tunnel.
+
+services:
+  ea:
+    restart: unless-stopped
+    environment:
+      BASE_URL: http://localhost:8080
+
+  ea-db:
+    restart: unless-stopped
+
+  mailpit:
+    restart: unless-stopped
+
+  mcp:
+    restart: unless-stopped
+    environment:
+      APP_URL: https://${DEMO_HOST:?Set DEMO_HOST in .env}
+      SERVER_NAME: ${DEMO_HOST}
+    ports: !override
+      - "80:8080"
+      - "443:8443"
+    volumes:
+      - mcp-data:/data/app
+      - caddy-data:/data/caddy
+      - caddy-config:/config/caddy
+
+  mcp-scheduler:
+    restart: unless-stopped
+
+volumes:
+  caddy-data:
+  caddy-config:

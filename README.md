@@ -56,6 +56,8 @@ php demo/e2e.php http://localhost:8000 frontdesk@demo.test demo-password-1 front
 php demo/e2e.php http://localhost:8000 frontdesk@demo.test demo-password-1 read
 ```
 
+To put the demo on a public server with HTTPS, follow [docs/deploy-demo.md](docs/deploy-demo.md).
+
 ## Install for a real booking system
 
 With Docker:

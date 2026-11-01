@@ -6,7 +6,7 @@
   "version": "0.1.0",
   "websiteUrl": "https://ea-mcp-demo.qiyuanlabs.ai",
   "repository": {
-    "url": "https://github.com/qiyuanlabs/easyappointments-mcp",
+    "url": "https://github.com/qiyuanlabs-ai/easyappointments-mcp",
     "source": "github"
   },
   "remotes": [
