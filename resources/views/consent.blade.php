@@ -22,15 +22,16 @@
         @if ($redirect = request()->query('redirect_uri'))
             <p class="small muted">You will be sent back to <span class="mono">{{ parse_url($redirect, PHP_URL_HOST) ?: $redirect }}</span>.</p>
         @endif
-        <div class="row">
+        {{-- Deny submits its own form (below) but sits next to Allow: secondary on the left, primary on the right. --}}
+        <div class="actions">
+            <button type="submit" class="quiet" form="deny-form">Deny</button>
             <button type="submit">Allow</button>
         </div>
     </form>
 
-    <form method="POST" action="{{ route('passport.authorizations.deny') }}">
+    <form id="deny-form" method="POST" action="{{ route('passport.authorizations.deny') }}" hidden>
         @csrf
         @method('DELETE')
         <input type="hidden" name="auth_token" value="{{ $authToken }}">
-        <button type="submit" class="quiet">Deny</button>
     </form>
 @endsection

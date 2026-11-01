@@ -68,6 +68,9 @@ class ConsentAndDashboardTest extends TestCase
             'code_challenge_method' => 'S256',
         ]));
         $page->assertOk()->assertSee('Connect Claude?')->assertSee('claude.ai')->assertSee('Your account is not allowed this level.');
+        // Deny and Allow sit side by side in one row, Deny first (secondary), Allow last (primary).
+        $page->assertSeeInOrder(['<div class="actions">', 'class="quiet" form="deny-form">Deny</button>', '<button type="submit">Allow</button>', '</div>'], false);
+        $page->assertSee('<form id="deny-form"', false);
 
         $response = $this->post('/oauth/consent', [
             'auth_token' => session('authToken'),
@@ -76,6 +79,34 @@ class ConsentAndDashboardTest extends TestCase
 
         $response->assertRedirectContains('https://claude.ai/api/mcp/auth_callback?code=');
         $this->assertSame(AccessLevel::Read, McpGrant::sole()->access_level);
+    }
+
+    public function test_deny_sends_the_client_back_with_access_denied(): void
+    {
+        $this->ensurePassportKeys();
+        $connection = EaConnection::create(['name' => 'Test clinic', 'base_url' => 'http://ea.test', 'api_token' => 'test-token']);
+        $user = User::factory()->create(['ea_connection_id' => $connection->id, 'max_access_level' => AccessLevel::FrontDesk]);
+        $client = app(ClientRepository::class)->createAuthorizationCodeGrantClient('Claude', ['https://claude.ai/api/mcp/auth_callback'], false);
+
+        $page = $this->actingAs($user)->get('/oauth/authorize?'.http_build_query([
+            'client_id' => $client->getKey(),
+            'redirect_uri' => 'https://claude.ai/api/mcp/auth_callback',
+            'response_type' => 'code',
+            'scope' => 'mcp:use',
+            'state' => 'abc',
+            'code_challenge' => rtrim(strtr(base64_encode(hash('sha256', Str::random(64), true)), '+/', '-_'), '='),
+            'code_challenge_method' => 'S256',
+        ]))->assertOk();
+
+        // CI renders this page in a real browser to check the button layout (demo/consent-layout.mjs).
+        if ($path = getenv('CONSENT_SNAPSHOT')) {
+            file_put_contents($path, $page->getContent());
+        }
+
+        $this->delete('/oauth/authorize', ['auth_token' => session('authToken')])
+            ->assertRedirectContains('https://claude.ai/api/mcp/auth_callback?')
+            ->assertRedirectContains('error=access_denied');
+        $this->assertSame(0, McpGrant::count());
     }
 
     public function test_consent_without_the_pending_request_token_is_refused(): void

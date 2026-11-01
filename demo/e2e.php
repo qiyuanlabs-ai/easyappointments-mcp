@@ -117,6 +117,47 @@ function tool(string $name, array $args = []): array
     return ['error' => (bool) ($result['isError'] ?? true), 'data' => $result['structuredContent'] ?? null, 'text' => $result['content'][0]['text'] ?? json_encode($r)];
 }
 
+/** Sends several tools/call requests at once, the way AI clients often do, and returns each result. */
+function parallel_tools(array $calls): array
+{
+    global $base, $token, $id;
+    $mh = curl_multi_init();
+    $handles = [];
+    foreach ($calls as [$name, $args]) {
+        $ch = curl_init("$base/mcp");
+        curl_setopt_array($ch, [
+            CURLOPT_POST => true,
+            CURLOPT_RETURNTRANSFER => true,
+            CURLOPT_TIMEOUT => 60,
+            CURLOPT_HTTPHEADER => ['Authorization: Bearer '.$token['access_token'], 'Accept: application/json, text/event-stream', 'MCP-Protocol-Version: 2025-06-18', 'Content-Type: application/json'],
+            CURLOPT_POSTFIELDS => json_encode(['jsonrpc' => '2.0', 'id' => ++$id, 'method' => 'tools/call', 'params' => ['name' => $name, 'arguments' => (object) $args]]),
+        ]);
+        curl_multi_add_handle($mh, $ch);
+        $handles[] = $ch;
+    }
+    do {
+        $status = curl_multi_exec($mh, $running);
+        if ($running) {
+            curl_multi_select($mh);
+        }
+    } while ($running && $status === CURLM_OK);
+
+    $results = [];
+    foreach ($handles as $ch) {
+        $code = curl_getinfo($ch, CURLINFO_RESPONSE_CODE);
+        $body = (string) curl_multi_getcontent($ch);
+        if (preg_match_all('/^data: (.*)$/m', $body, $m)) {
+            $body = end($m[1]);
+        }
+        $result = json_decode($body, true)['result'] ?? null;
+        $results[] = ['error' => $result === null || ($result['isError'] ?? false), 'text' => $result['content'][0]['text'] ?? "HTTP $code ".substr($body, 0, 200)];
+        curl_multi_remove_handle($mh, $ch);
+    }
+    curl_multi_close($mh);
+
+    return $results;
+}
+
 echo "MCP\n";
 $init = mcp('initialize', ['protocolVersion' => '2025-06-18', 'capabilities' => (object) [], 'clientInfo' => ['name' => 'e2e', 'version' => '1']]);
 check(($init['result']['serverInfo']['name'] ?? '') === 'Easy!Appointments', 'initialize (2025-06-18 client)');
@@ -129,6 +170,16 @@ $service = collect_first($services['data']['services'], fn ($s) => count($s['pro
 
 $slots = tool('find_open_slots', ['service_id' => $service['id'], 'days' => 5, 'date_from' => date('Y-m-d', strtotime('+2 days'))]);
 check(! $slots['error'] && $slots['data']['total_open_times'] > 0, "find_open_slots for {$service['name']}: {$slots['data']['total_open_times']} open times");
+
+$calls = [];
+foreach ($services['data']['services'] as $s) {
+    $calls[] = ['find_open_slots', ['service_id' => $s['id'], 'days' => 3, 'date_from' => date('Y-m-d', strtotime('+3 days'))]];
+}
+$calls[] = ['list_services', []];
+$calls[] = ['find_customer', ['query' => 'example.test']];
+$parallel = parallel_tools($calls);
+$failed = array_values(array_filter($parallel, fn ($r) => $r['error']));
+check($failed === [], count($calls).' tool calls sent at the same time all succeed', $failed[0] ?? null);
 
 $customers = tool('find_customer', ['query' => 'example.test']);
 check(! $customers['error'] && $customers['data']['count'] > 0, "find_customer: {$customers['data']['count']} matches");

@@ -20,6 +20,9 @@
         button.quiet, .button.quiet { background: transparent; color: var(--accent); }
         button.danger { background: transparent; color: var(--bad); border-color: var(--bad); }
         .row { display: flex; gap: 12px; align-items: center; flex-wrap: wrap; }
+        .actions { display: flex; gap: 12px; justify-content: flex-end; margin-top: 16px; }
+        .actions button { min-width: 112px; }
+        @media (max-width: 480px) { .actions { flex-direction: column-reverse; } .actions button { width: 100%; } }
         .choice { display: flex; gap: 10px; padding: 12px; border: 1px solid var(--line); border-radius: 8px; margin-bottom: 8px; cursor: pointer; font-weight: normal; }
         .choice input { margin-top: 4px; }
         table { width: 100%; border-collapse: collapse; font-size: 13.5px; }

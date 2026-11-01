@@ -26,6 +26,33 @@ jobs:
       - run: vendor/bin/pint --test
       - run: php artisan test
 
+  consent-layout:
+    runs-on: ubuntu-latest
+    needs: tests
+    steps:
+      - uses: actions/checkout@v4
+      - uses: shivammathur/setup-php@v2
+        with:
+          php-version: "8.4"
+          extensions: pdo_sqlite, intl
+          coverage: none
+      - run: composer install --no-interaction --prefer-dist --no-progress
+      - run: cp .env.example .env && php artisan key:generate && php artisan passport:keys
+      - name: Render the consent page
+        run: CONSENT_SNAPSHOT="$PWD/consent.html" php artisan test --filter=test_deny_sends_the_client_back_with_access_denied
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - name: Check the button layout in Chrome and take screenshots
+        run: |
+          npm install --no-save --no-package-lock puppeteer-core@25.13.0
+          CHROME="$(command -v google-chrome || command -v chromium)" node demo/consent-layout.mjs consent.html screenshots
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: consent-screenshots
+          path: screenshots/
+
   docker:
     runs-on: ubuntu-latest
     needs: tests
