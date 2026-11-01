@@ -101,23 +101,33 @@ abstract class WriteTool extends EaTool
         }
 
         $outcomeUnknown = false;
+        $changed = false;
 
         try {
             $change = $this->plan($request, $ea, true);
-            $result = $this->underLock($change->lock, function () use ($change, &$outcomeUnknown) {
+            $result = $this->underLock($change->lock, function () use ($change, $ea, &$outcomeUnknown, &$changed) {
                 if ($change->recheck !== null) {
                     ($change->recheck)();
                 }
 
+                $before = $ea->appointmentChanges();
+
                 try {
                     return ($change->execute)();
-                } catch (EaApiException $e) {
+                } catch (Throwable $e) {
+                    // Easy!Appointments already confirmed the appointment write, so whatever failed
+                    // after it, the change is made and must never look refused.
+                    $changed = $ea->appointmentChanges() > $before;
                     // No answer or a server error: Easy!Appointments may still have made the change.
-                    $outcomeUnknown = $e->outcomeUnknown();
+                    $outcomeUnknown = $changed || ($e instanceof EaApiException && $e->outcomeUnknown());
                     throw $e;
                 }
             });
         } catch (Throwable $e) {
+            if ($changed) {
+                throw new ToolFailure('Easy!Appointments made the change, but reading back its details failed. Do not repeat it: check the result with list_appointments.');
+            }
+
             if ($outcomeUnknown) {
                 throw new ToolFailure('Easy!Appointments did not confirm the change (no answer, or a server error), so it is not clear whether the change was made. Check with list_appointments before trying again with a new idempotency_key.');
             }

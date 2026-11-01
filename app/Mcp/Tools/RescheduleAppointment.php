@@ -83,17 +83,23 @@ class RescheduleAppointment extends WriteTool
             'emails' => 'Easy!Appointments will email the customer and provider about the change.',
         ];
 
-        return new PlannedChange($preview, function () use ($ea, $current, $customer, $provider, $newStart, $oldStart, $timezone) {
+        return new PlannedChange($preview, function () use ($ea, $current, $customer, $service, $provider, $newStart, $oldStart, $timezone) {
             $appointment = $ea->updateAppointment($current['id'], [
                 'start' => $newStart->format('Y-m-d H:i:00'),
-                'end' => $newStart->addMinutes($ea->service($current['service_id'])['duration'])->format('Y-m-d H:i:00'),
+                'end' => $newStart->addMinutes($service['duration'])->format('Y-m-d H:i:00'),
                 'providerId' => $provider['id'],
             ]);
 
             $ea->forgetAvailability($current['provider_id'], $oldStart->format('Y-m-d'));
             $ea->forgetAvailability($provider['id'], $newStart->format('Y-m-d'));
 
-            return ['status' => 'rescheduled', 'timezone' => $timezone, 'appointment' => array_merge($appointment, ['customer' => $customer['name'] ?? null])];
+            // Names come from what was checked before the change, in case reading them back failed.
+            return ['status' => 'rescheduled', 'timezone' => $timezone, 'appointment' => array_merge($appointment, [
+                'customer' => $customer['name'] ?? null,
+                'service' => $appointment['service'] ?? $service['name'],
+                'provider' => $appointment['provider'] ?? $provider['name'],
+                'timezone' => $appointment['timezone'] ?? $timezone,
+            ])];
         }, $current['id'],
             lock: $this->slotLock($ea, $provider['id'], $newStart),
             recheck: fn () => $checkSlot(true),

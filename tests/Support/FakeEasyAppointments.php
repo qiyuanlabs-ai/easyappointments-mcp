@@ -56,6 +56,9 @@ class FakeEasyAppointments
     /** Called with "METHOD /path" before each request is answered. */
     public ?\Closure $onRequest = null;
 
+    /** "METHOD /path" => HTTP status: those requests fail with that status. */
+    public array $failRequests = [];
+
     /** When set, every request fails with this HTTP status. */
     public ?int $failWith = null;
 
@@ -87,6 +90,10 @@ class FakeEasyAppointments
 
         if ($this->onRequest !== null) {
             ($this->onRequest)("$method $path");
+        }
+
+        if (isset($this->failRequests["$method $path"])) {
+            return Http::response(['message' => 'Failure'], $this->failRequests["$method $path"]);
         }
 
         if ($this->failWith !== null) {

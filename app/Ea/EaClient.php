@@ -23,6 +23,9 @@ class EaClient
     /** Requests already paid for from the shared budget by reserve(). */
     private int $reserved = 0;
 
+    /** Appointment writes Easy!Appointments has confirmed (a 2xx to POST, PUT or DELETE). */
+    private int $appointmentChanges = 0;
+
     public function __construct(
         private readonly EaConnection $connection,
         private readonly EaRequestLog $log,
@@ -192,12 +195,14 @@ class EaClient
         return array_values($results);
     }
 
-    /** Drop cached slots for a provider on a day after a booking changes them. */
+    /**
+     * Drop cached slots for a provider on a day after a booking changes them. It only bumps a
+     * version number in the cache and never asks Easy!Appointments for anything, because it
+     * runs after a change has been made and must not fail.
+     */
     public function forgetAvailability(int $providerId, string $date): void
     {
-        foreach ($this->services() as $service) {
-            Cache::forget($this->availabilityKey($providerId, $service['id'], $date));
-        }
+        Cache::put($this->availabilityVersionKey($providerId, $date), bin2hex(random_bytes(6)), config('easyappointments.availability_cache_seconds') + 60);
     }
 
     /** @return list<array> */
@@ -251,12 +256,32 @@ class EaClient
 
     public function createAppointment(array $data): array
     {
-        return $this->mapAppointment($this->send('POST', '/appointments', $data));
+        return $this->mapWritten($this->send('POST', '/appointments', $data));
     }
 
     public function updateAppointment(int $id, array $data): array
     {
-        return $this->mapAppointment($this->send('PUT', "/appointments/$id", $data));
+        return $this->mapWritten($this->send('PUT', "/appointments/$id", $data));
+    }
+
+    /** How many appointment writes Easy!Appointments has confirmed through this client so far. */
+    public function appointmentChanges(): int
+    {
+        return $this->appointmentChanges;
+    }
+
+    /**
+     * Maps an appointment that Easy!Appointments has just saved. The change is done at this
+     * point, so looking up names must not turn it into an error: if a lookup fails, the
+     * service and provider names are simply left out.
+     */
+    private function mapWritten(array $a): array
+    {
+        try {
+            return $this->mapAppointment($a);
+        } catch (EaApiException) {
+            return $this->mapAppointment($a, lookUp: false);
+        }
     }
 
     public function deleteAppointment(int $id): void
@@ -274,10 +299,10 @@ class EaClient
         ];
     }
 
-    private function mapAppointment(array $a): array
+    private function mapAppointment(array $a, bool $lookUp = true): array
     {
-        $service = $this->service((int) $a['serviceId']);
-        $provider = $this->provider((int) $a['providerId']);
+        $service = $lookUp ? $this->service((int) $a['serviceId']) : null;
+        $provider = $lookUp ? $this->provider((int) $a['providerId']) : null;
 
         return [
             'id' => (int) $a['id'],
@@ -287,7 +312,7 @@ class EaClient
             'service' => $service['name'] ?? null,
             'provider_id' => (int) $a['providerId'],
             'provider' => $provider['name'] ?? null,
-            'timezone' => $provider['timezone'] ?? $this->timezone(),
+            'timezone' => $provider['timezone'] ?? ($lookUp ? $this->timezone() : null),
             'customer_id' => $a['customerId'] !== null ? (int) $a['customerId'] : null,
             'customer' => isset($a['customer']['first_name']) ? trim($a['customer']['first_name'].' '.$a['customer']['last_name']) : null,
             'notes' => $a['notes'] ?? null,
@@ -362,6 +387,10 @@ class EaClient
             throw EaApiException::fromStatus($response->status(), $method, $path);
         }
 
+        if ($method !== 'GET' && str_starts_with($path, '/appointments')) {
+            $this->appointmentChanges++;
+        }
+
         return $response->status() === 204 ? null : $response->json();
     }
 
@@ -405,6 +434,13 @@ class EaClient
 
     private function availabilityKey(int $providerId, int $serviceId, string $date): string
     {
-        return "ea:{$this->connection->id}:slots:$providerId:$serviceId:$date";
+        $version = Cache::get($this->availabilityVersionKey($providerId, $date), '0');
+
+        return "ea:{$this->connection->id}:slots:$providerId:$serviceId:$date:$version";
+    }
+
+    private function availabilityVersionKey(int $providerId, string $date): string
+    {
+        return "ea:{$this->connection->id}:slots-version:$providerId:$date";
     }
 }

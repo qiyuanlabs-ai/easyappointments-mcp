@@ -119,6 +119,8 @@ class BookAppointment extends WriteTool
                 $customer = $ea->createCustomer($newCustomer);
             }
 
+            $before = $ea->appointmentChanges();
+
             try {
                 $appointment = $ea->createAppointment([
                     'start' => $start->format('Y-m-d H:i:00'),
@@ -128,10 +130,11 @@ class BookAppointment extends WriteTool
                     'notes' => $notes,
                 ]);
             } catch (EaApiException $e) {
-                // Only a clear refusal (4xx) means nothing was booked, so only then remove the
-                // customer made for this booking. After no answer or a server error the booking
-                // may exist, and deleting its customer could take the booking with it.
-                if ($createdCustomer && ! $e->outcomeUnknown()) {
+                // Only a clear refusal (4xx) of the booking itself means nothing was booked, so only
+                // then remove the customer made for it. After no answer, a server error, or any
+                // error once the booking was saved, it may exist, and Easy!Appointments deletes a
+                // customer's bookings with the customer.
+                if ($createdCustomer && ! $e->outcomeUnknown() && $ea->appointmentChanges() === $before) {
                     try {
                         $ea->deleteCustomer($customer['id']);
                     } catch (EaApiException) {
@@ -147,7 +150,13 @@ class BookAppointment extends WriteTool
             return [
                 'status' => 'booked',
                 'timezone' => $timezone,
-                'appointment' => array_merge($appointment, ['customer' => $customer['name']]),
+                // Names come from what was checked before booking, in case reading them back failed.
+                'appointment' => array_merge($appointment, [
+                    'customer' => $customer['name'],
+                    'service' => $appointment['service'] ?? $service['name'],
+                    'provider' => $appointment['provider'] ?? $provider['name'],
+                    'timezone' => $appointment['timezone'] ?? $timezone,
+                ]),
             ];
         },
             lock: $this->slotLock($ea, $provider['id'], $start),

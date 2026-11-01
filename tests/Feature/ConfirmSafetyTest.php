@@ -12,6 +12,7 @@ use App\Models\IdempotencyKey;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\RateLimiter;
+use PHPUnit\Framework\Attributes\DataProvider;
 use Tests\Support\ConnectsMcp;
 use Tests\TestCase;
 
@@ -197,5 +198,97 @@ class ConfirmSafetyTest extends TestCase
 
         config(['easyappointments.timeout' => 30]);
         $this->assertSame(210, WriteTool::lockSeconds());
+    }
+
+    /**
+     * After Easy!Appointments saves the appointment, the catalog cache runs out and reading
+     * service and provider names back fails with the given status.
+     */
+    private function failLookupsAfterTheWrite(int|\Throwable $failure): void
+    {
+        $connection = $this->user->ea_connection_id;
+        $written = false;
+        $this->ea->onRequest = function (string $request) use ($connection, $failure, &$written) {
+            if ($written && $failure instanceof \Throwable && str_starts_with($request, 'GET ')) {
+                throw $failure;
+            }
+
+            if (preg_match('#^(POST|PUT) /appointments#', $request)) {
+                $written = true;
+                Cache::forget("ea:$connection:services");
+                Cache::forget("ea:$connection:providers.v2");
+
+                if (is_int($failure)) {
+                    $this->ea->failRequests['GET /services'] = $failure;
+                    $this->ea->failRequests['GET /providers'] = $failure;
+                }
+            }
+        };
+    }
+
+    public static function lookupFailures(): array
+    {
+        return ['a 4xx' => [404], 'rate limited' => [429]];
+    }
+
+    #[DataProvider('lookupFailures')]
+    public function test_a_failed_read_after_booking_a_new_customer_keeps_the_customer_and_the_booking(int $status): void
+    {
+        $booking = ['new_customer' => ['first_name' => 'Taylor', 'last_name' => 'Test', 'email' => 'taylor@example.test']] + $this->booking;
+        unset($booking['customer_id']);
+        $token = $this->preview($booking);
+        $this->failLookupsAfterTheWrite($status);
+
+        $booked = $this->structured($this->confirm($booking, $token, 'key-read-new'));
+
+        $this->assertSame('booked', $booked['status']);
+        $this->assertSame(['Anna Kim', 'Initial assessment', 'Taylor Test'], [$booked['appointment']['provider'], $booked['appointment']['service'], $booked['appointment']['customer']]);
+        $this->assertSame(['POST /customers', 'POST /appointments'], $this->ea->writes(), 'The new customer is not deleted.');
+        $this->assertCount(1, $this->ea->appointments);
+        $this->assertTrue(IdempotencyKey::sole()->isCompleted());
+    }
+
+    #[DataProvider('lookupFailures')]
+    public function test_a_failed_read_after_booking_an_existing_customer_still_reports_the_booking(int $status): void
+    {
+        $token = $this->preview($this->booking);
+        $this->failLookupsAfterTheWrite($status);
+
+        $booked = $this->structured($this->confirm($this->booking, $token, 'key-read-old'));
+
+        $this->assertSame('booked', $booked['status']);
+        $this->assertSame('Anna Kim', $booked['appointment']['provider']);
+        $this->assertCount(1, $this->ea->appointments);
+        $this->assertTrue(IdempotencyKey::sole()->isCompleted());
+    }
+
+    #[DataProvider('lookupFailures')]
+    public function test_a_failed_read_after_a_reschedule_still_reports_the_move(int $status): void
+    {
+        $id = $this->ea->addAppointment(['start' => '2026-11-03 10:00', 'serviceId' => 1, 'providerId' => 10, 'customerId' => 1])['id'];
+        $move = ['appointment_id' => $id, 'new_start' => '2026-11-04 13:00'];
+        $token = $this->structured(EasyAppointmentsServer::tool(RescheduleAppointment::class, $move))['confirmation_token'];
+        $this->failLookupsAfterTheWrite($status);
+
+        $done = $this->structured(EasyAppointmentsServer::tool(RescheduleAppointment::class, $move + ['confirm' => true, 'confirmation_token' => $token, 'idempotency_key' => 'key-read-move']));
+
+        $this->assertSame('rescheduled', $done['status']);
+        $this->assertSame(['2026-11-04 13:00', 'Anna Kim', 'Initial assessment'], [$done['appointment']['start'], $done['appointment']['provider'], $done['appointment']['service']]);
+        $this->assertSame('2026-11-04 13:00:00', $this->ea->appointments[$id]['start']);
+        $this->assertTrue(IdempotencyKey::sole()->isCompleted());
+    }
+
+    public function test_any_other_error_after_the_write_never_looks_like_a_refusal(): void
+    {
+        $booking = ['new_customer' => ['first_name' => 'Taylor', 'last_name' => 'Test', 'email' => 'taylor@example.test']] + $this->booking;
+        unset($booking['customer_id']);
+        $token = $this->preview($booking);
+        $this->failLookupsAfterTheWrite(new \RuntimeException('Something unexpected'));
+
+        $this->confirm($booking, $token, 'key-read-boom')->assertHasErrors(['Easy!Appointments made the change', 'Do not repeat it']);
+
+        $this->assertSame(['POST /customers', 'POST /appointments'], $this->ea->writes(), 'The new customer is not deleted.');
+        $this->assertCount(1, $this->ea->appointments);
+        $this->assertFalse(IdempotencyKey::sole()->isCompleted(), 'The key stays claimed, so a retry cannot book again.');
     }
 }
