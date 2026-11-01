@@ -32,34 +32,10 @@ DNS only lets the server get its own certificate and keeps streamed MCP response
 Open the instance's browser SSH (**Connect using SSH**) and run:
 
 ```sh
-curl -fsSL https://get.docker.com | sudo sh
-sudo usermod -aG docker ubuntu
-exit
+curl -fsSL https://raw.githubusercontent.com/qiyuanlabs-ai/easyappointments-mcp/main/demo/install-server.sh | sudo sh
 ```
 
-Connect again, then:
-
-```sh
-sudo git clone https://github.com/qiyuanlabs-ai/easyappointments-mcp.git /opt/ea-mcp-server
-sudo chown -R ubuntu:ubuntu /opt/ea-mcp-server
-cd /opt/ea-mcp-server
-
-cat > .env <<EOF
-COMPOSE_FILE=docker-compose.yml:docker-compose.demo.yml
-DEMO_HOST=ea-mcp-demo.qiyuanlabs.ai
-EA_DB_ROOT_PASSWORD=$(openssl rand -hex 16)
-EOF
-
-cp .env.docker.example .env.docker
-sed -i "s|^EA_API_TOKEN=.*|EA_API_TOKEN=$(openssl rand -hex 24)|" .env.docker
-docker compose build mcp
-sed -i "s|^APP_KEY=.*|APP_KEY=$(docker compose run --rm --no-deps --entrypoint php mcp artisan key:generate --show 2>/dev/null | tail -1)|" .env.docker
-
-docker compose up -d
-sh demo/setup.sh
-```
-
-`demo/setup.sh` installs Easy!Appointments, seeds the fictional clinic and creates the demo login. Easy!Appointments rate limits its API, so seeding takes a few minutes.
+[`demo/install-server.sh`](../demo/install-server.sh) installs Docker if needed, clones the repository to `/opt/ea-mcp-server`, generates the secrets, starts everything, seeds the fictional clinic, creates the demo login and adds the nightly reset (03:00 server time). Easy!Appointments rate limits its API, so seeding takes a few minutes. Run the same line again to update: it keeps the secrets and reseeds the demo data.
 
 ## 4. Check it
 
@@ -74,19 +50,7 @@ curl -s -o /dev/null -w '%{http_code}\n' -X POST https://ea-mcp-demo.qiyuanlabs.
 php demo/e2e.php https://ea-mcp-demo.qiyuanlabs.ai frontdesk@demo.test demo-password-1 front_desk
 ```
 
-## 5. Reset the demo every night
-
-```sh
-crontab -e
-```
-
-Add:
-
-```
-0 3 * * * cd /opt/ea-mcp-server && sh demo/reset.sh >> /home/ubuntu/ea-demo-reset.log 2>&1
-```
-
-## 6. Look at Easy!Appointments and the emails
+## 5. Look at Easy!Appointments and the emails
 
 Both stay private on the machine. From your computer, with the SSH key from the Lightsail console:
 
@@ -96,13 +60,11 @@ ssh -i LightsailDefaultKey.pem -L 8080:127.0.0.1:8080 -L 8025:127.0.0.1:8025 ubu
 
 Then open http://localhost:8080 (Easy!Appointments, `administrator` / `administrator`; change this password under the admin's profile) and http://localhost:8025 (emails).
 
-## 7. Updates
+## 6. Updates
 
-```sh
-cd /opt/ea-mcp-server && git pull && docker compose up -d --build
-```
+Run the install line from step 3 again.
 
-## 8. List it in the MCP Registry
+## 7. List it in the MCP Registry
 
 Only once the demo answers as in step 4.
 
