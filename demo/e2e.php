@@ -48,10 +48,13 @@ function field(string $html, string $name): string
     return html_entity_decode($m[1] ?? '');
 }
 
-function check(bool $ok, string $what): void
+function check(bool $ok, string $what, ?array $result = null): void
 {
     global $failures;
     echo ($ok ? '  ok   ' : '  FAIL ').$what."\n";
+    if (! $ok && $result !== null) {
+        echo '       '.substr((string) $result['text'], 0, 400)."\n";
+    }
     $failures += $ok ? 0 : 1;
 }
 
@@ -149,7 +152,7 @@ $booking = [
     'notes' => 'Booked by the end-to-end check',
 ];
 $noPhone = tool('book_appointment', $booking);
-check($noPhone['error'] && str_contains($noPhone['text'], 'new_customer.phone'), 'a new customer without the required phone number is caught at preview');
+check($noPhone['error'] && str_contains($noPhone['text'], 'new_customer.phone'), 'a new customer without the required phone number is caught at preview', $noPhone);
 $booking['new_customer']['phone'] = '+1 555 0100';
 $preview = tool('book_appointment', $booking);
 check(! $preview['error'] && $preview['data']['status'] === 'preview', "book_appointment preview: {$booking['start']} with {$slot['provider']}");
@@ -158,13 +161,13 @@ $key = bin2hex(random_bytes(8));
 $booked = tool('book_appointment', $booking + ['confirm' => true, 'idempotency_key' => $key]);
 check(! $booked['error'] && $booked['data']['status'] === 'booked', 'book_appointment confirmed: appointment #'.($booked['data']['appointment']['id'] ?? '?'));
 $replay = tool('book_appointment', $booking + ['confirm' => true, 'idempotency_key' => $key]);
-check(! $replay['error'] && ($replay['data']['replayed'] ?? false) && $replay['data']['appointment']['id'] === $booked['data']['appointment']['id'], 'same idempotency_key replays instead of booking twice');
+check(! $replay['error'] && ($replay['data']['replayed'] ?? false) && $replay['data']['appointment']['id'] === $booked['data']['appointment']['id'], 'same idempotency_key replays instead of booking twice', $replay);
 $again = tool('book_appointment', $booking + ['confirm' => true, 'idempotency_key' => bin2hex(random_bytes(8))]);
-check($again['error'] && str_contains($again['text'], 'not open'), 'a second booking for the taken slot is refused');
+check($again['error'] && str_contains($again['text'], 'not open'), 'a second booking for the taken slot is refused', $again);
 
 $appointmentId = $booked['data']['appointment']['id'];
 $list = tool('list_appointments', ['customer_id' => $booked['data']['appointment']['customer_id']]);
-check(! $list['error'] && in_array($appointmentId, array_column($list['data']['appointments'], 'id'), true), 'list_appointments finds the new booking');
+check(! $list['error'] && in_array($appointmentId, array_column($list['data']['appointments'], 'id'), true), 'list_appointments finds the new booking', $list);
 
 $move = tool('find_open_slots', ['service_id' => $service['id'], 'provider_id' => $slot['provider_id'], 'date_from' => date('Y-m-d', strtotime($slot['date'].' +1 day')), 'days' => 5]);
 $newStart = null;
@@ -178,17 +181,17 @@ $reschedule = ['appointment_id' => $appointmentId, 'new_start' => $newStart];
 $p = tool('reschedule_appointment', $reschedule);
 check(! $p['error'] && $p['data']['status'] === 'preview', "reschedule_appointment preview to $newStart");
 $r = tool('reschedule_appointment', $reschedule + ['confirm' => true, 'idempotency_key' => bin2hex(random_bytes(8))]);
-check(! $r['error'] && ($r['data']['appointment']['start'] ?? '') === $newStart, 'reschedule_appointment confirmed');
+check(! $r['error'] && ($r['data']['appointment']['start'] ?? '') === $newStart, 'reschedule_appointment confirmed', $r);
 
 $p = tool('cancel_appointment', ['appointment_id' => $appointmentId, 'reason' => 'E2E clean-up']);
-check(! $p['error'] && $p['data']['status'] === 'preview', 'cancel_appointment preview');
+check(! $p['error'] && $p['data']['status'] === 'preview', 'cancel_appointment preview', $p);
 $c = tool('cancel_appointment', ['appointment_id' => $appointmentId, 'reason' => 'E2E clean-up', 'confirm' => true, 'idempotency_key' => bin2hex(random_bytes(8))]);
-check(! $c['error'] && $c['data']['status'] === 'cancelled', 'cancel_appointment confirmed');
+check(! $c['error'] && ($c['data']['status'] ?? null) === 'cancelled', 'cancel_appointment confirmed', $c);
 $gone = tool('list_appointments', ['customer_id' => $booked['data']['appointment']['customer_id']]);
-check(! in_array($appointmentId, array_column($gone['data']['appointments'] ?? [], 'id'), true), 'the cancelled appointment is gone');
+check(! $gone['error'] && ! in_array($appointmentId, array_column($gone['data']['appointments'] ?? [], 'id'), true), 'the cancelled appointment is gone', $gone);
 
 $missing = tool('book_appointment', ['service_id' => $service['id'], 'provider_id' => $slot['provider_id'], 'start' => '2020-01-01 09:00', 'customer_id' => 1]);
-check($missing['error'] && str_contains($missing['text'], 'past'), 'a time in the past is refused with a clear message');
+check($missing['error'] && str_contains($missing['text'], 'past'), 'a time in the past is refused with a clear message', $missing);
 
 echo $failures ? "\n$failures check(s) failed\n" : "\nAll checks passed\n";
 exit($failures ? 1 : 0);
