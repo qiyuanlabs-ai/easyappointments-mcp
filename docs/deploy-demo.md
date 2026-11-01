@@ -35,7 +35,7 @@ Open the instance's browser SSH (**Connect using SSH**) and run:
 curl -fsSL https://raw.githubusercontent.com/qiyuanlabs-ai/easyappointments-mcp/main/demo/install-server.sh | sudo sh
 ```
 
-[`demo/install-server.sh`](../demo/install-server.sh) installs Docker if needed, clones the repository to `/opt/ea-mcp-server`, generates the secrets, starts everything, seeds the fictional clinic, creates the demo login and adds the nightly reset (03:00 server time). Easy!Appointments rate limits its API, so seeding takes a few minutes. Run the same line again to update: it keeps the secrets and reseeds the demo data.
+[`demo/install-server.sh`](../demo/install-server.sh) installs Docker if needed, clones the repository to `/opt/ea-mcp-server`, generates the secrets (including a random Easy!Appointments admin password), starts everything, seeds the fictional clinic, creates the demo login and adds the nightly reset (03:00 server time). Easy!Appointments rate limits its API, so seeding takes a few minutes. Run the same line again to update: it keeps the secrets and reseeds the demo data.
 
 ## 4. Check it
 
@@ -58,7 +58,7 @@ Both stay private on the machine. From your computer, with the SSH key from the 
 ssh -i LightsailDefaultKey.pem -L 8080:127.0.0.1:8080 -L 8025:127.0.0.1:8025 ubuntu@STATIC_IP
 ```
 
-Then open http://localhost:8080 (Easy!Appointments, `administrator` / `administrator`; change this password under the admin's profile) and http://localhost:8025 (emails).
+Then open http://localhost:8080 (Easy!Appointments, user `administrator`) and http://localhost:8025 (emails). The install replaces the installer's default admin password with a random one; read it on the server with `sudo grep EA_ADMIN_PASSWORD /opt/ea-mcp-server/.env`. The nightly reset keeps it.
 
 ## 6. Updates
 

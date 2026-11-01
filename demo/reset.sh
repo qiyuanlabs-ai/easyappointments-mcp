@@ -22,6 +22,7 @@ DELETE FROM ea_services;
 SET FOREIGN_KEY_CHECKS = 1;
 SQL
 
+sh demo/ea-admin-password.sh
 docker compose exec -T mcp php demo/seed-ea.php http://ea
 docker compose exec -T mcp php artisan cache:clear >/dev/null
 echo "Demo reset at $(date -u +%FT%TZ)"

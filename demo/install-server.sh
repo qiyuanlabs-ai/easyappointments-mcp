@@ -27,6 +27,7 @@ if [ ! -f .env.docker ]; then
   cp .env.docker.example .env.docker
   sed -i "s|^EA_API_TOKEN=.*|EA_API_TOKEN=$(openssl rand -hex 24)|" .env.docker
 fi
+grep -q '^EA_ADMIN_PASSWORD=' .env || echo "EA_ADMIN_PASSWORD=$(openssl rand -hex 12)" >> .env
 chmod 600 .env .env.docker
 
 docker compose build mcp
@@ -44,3 +45,4 @@ CRON
 
 echo
 echo "Demo is up. Once DNS for $DEMO_HOST points here, open https://$DEMO_HOST"
+echo "Easy!Appointments admin (SSH tunnel only): administrator, password in $DIR/.env (EA_ADMIN_PASSWORD)"
