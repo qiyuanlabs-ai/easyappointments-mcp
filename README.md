@@ -6,9 +6,9 @@ It is built for the people who run the booking system, not only for developers:
 
 - **Sign in with OAuth.** Staff connect their AI assistant with their own login. The Easy!Appointments API token never leaves the server.
 - **Two access levels per connection.** *Read only* sees services, open times, customers and bookings. *Front desk* can also book, reschedule and cancel. Each person has a ceiling set by an administrator.
-- **Nothing changes without a preview.** Every change is a two-step call: a preview the assistant shows to the person, then a confirmed call with an idempotency key, so a retried request never books twice.
+- **Nothing changes without a preview.** Every change is a two-step call: a preview the assistant shows to the person, then a confirmed call that carries the preview's signed `confirmation_token` and an idempotency key. A confirm that does not match a preview is refused, and a retried request never books twice.
 - **A call log.** Every tool call is recorded with masked personal details, the Easy!Appointments requests it made and how long it took. Staff can see it, export it as CSV and disconnect any assistant.
-- **Gentle on Easy!Appointments.** The API allows 100 requests per IP every two minutes. The server caches the catalog and open times and caps how many days one search covers.
+- **Gentle on Easy!Appointments.** The API allows 100 requests per IP every two minutes. The server caches the catalog and open times, caps how many days one search covers, and keeps one shared request budget per booking system (`EA_REQUEST_BUDGET`, 90 per two minutes by default) so many assistants together cannot lock it out.
 
 Not affiliated with or endorsed by Easy!Appointments. Easy!Appointments is a trademark of its owner.
 
@@ -16,7 +16,7 @@ Not affiliated with or endorsed by Easy!Appointments. Easy!Appointments is a tra
 
 | Tool | Access | What it does |
 | --- | --- | --- |
-| `list_services` | Read only | Services with duration, price and who offers them, plus the business time zone |
+| `list_services` | Read only | Services with duration, price and who offers them, plus each provider's time zone |
 | `find_open_slots` | Read only | Open start times for a service over up to 14 days, for one provider or all, filtered by morning, afternoon or evening |
 | `find_customer` | Read only | Customers by name, email or phone |
 | `list_appointments` | Read only | Bookings for a customer, a provider or a date range |
@@ -66,13 +66,15 @@ With Docker:
 docker run -d --name ea-mcp \
   -e APP_KEY=base64:... \
   -e APP_URL=https://mcp.example.com \
-  -e TRUSTED_PROXIES='*' \
+  -e TRUSTED_PROXIES=10.0.0.5 \
   -v ea-mcp-data:/data/app \
-  -p 8080:8080 \
+  -p 127.0.0.1:8080:8080 \
   ea-mcp-server
 ```
 
-Put it behind your HTTPS load balancer or reverse proxy, or set `SERVER_NAME=mcp.example.com` and publish ports 80 and 443 to let the built-in Caddy get a certificate. Run `php artisan schedule:work` in a second container from the same image to prune old logs and expired tokens daily.
+Put it behind your HTTPS load balancer or reverse proxy, or set `SERVER_NAME=mcp.example.com` and publish ports 80 and 443 to let the built-in Caddy get a certificate.
+
+`TRUSTED_PROXIES` decides whose `X-Forwarded-For` header is believed, and rate limits are per client IP. Set it to your proxy's address only, and publish port 8080 only to that proxy (or to `127.0.0.1` when the proxy runs on the same host). Never use `*` while the port can be reached directly, because anyone could then pick their own IP and slip past the rate limits. Leave it unset when the built-in Caddy handles HTTPS. Run `php artisan schedule:work` in a second container from the same image to prune old logs and expired tokens daily.
 
 Without Docker it is a standard Laravel 13 app: `composer install --no-dev`, copy `.env.example` to `.env`, `php artisan key:generate`, `php artisan passport:keys`, `php artisan migrate`, and point your web server at `public/`.
 
@@ -94,15 +96,23 @@ Add `https://your-server/mcp` as a custom connector (Claude: Settings > Connecto
 ## Security model
 
 - The Easy!Appointments API token is admin-level, so it is stored encrypted on this server and never sent to clients. Each person signs in with their own account and gets a short-lived token (1 hour, refreshable for 30 days) that only works here.
-- Tools a connection may not use are not listed to the assistant, and are refused if called anyway.
-- Writes need a confirmed second call with an idempotency key. The slot is checked again, uncached, right before booking.
-- Names, emails, phone numbers, addresses, notes and search text are masked in the call log. Easy!Appointments error messages that echo customer records are stripped before they reach the assistant or the log.
+- Before sign-in, `initialize` and `tools/list` answer without a token, so a client can show what the server offers. Any `tools/call` (and everything else) without a valid token gets `401` with a `WWW-Authenticate` header pointing at the OAuth metadata, which is what starts sign-in in Claude and other clients. After sign-in, tools a connection may not use are not listed, and are refused if called anyway.
+- Writes need a confirmed second call. The confirm must carry the `confirmation_token` from a preview of exactly the same arguments, by the same person and assistant, within 10 minutes (`MCP_CONFIRMATION_MINUTES`), plus an idempotency key. The key is claimed before anything is written, so parallel retries with one key book once.
+- Easy!Appointments does not check availability when the API creates or moves a booking. So each confirm takes a lock for that provider and day, checks the slot again uncached inside the lock, and only then writes. Two confirms for the same slot with different keys book it once; the other is refused with the nearest open times.
+- If the answer from Easy!Appointments is lost after a write, the key stays claimed and the assistant is told to check with `list_appointments` instead of retrying blindly.
+- Times are read and written in each provider's own time zone, as Easy!Appointments stores them, and every result says which zone it uses.
+- Client registration is open, as MCP expects, but limited: redirect URIs must be `https` (or `http` on a loopback address) with no fragment or user info, registration is rate limited per IP (`MCP_REGISTRATIONS_PER_HOUR`, 10), and clients that are never used are removed after a day and unused ones after 90 days.
+- The consent screen marks the client's name as unverified (any app can pick its own name), shows the host the person will be sent to, and warns when that host is not a known AI assistant (`MCP_KNOWN_CLIENT_HOSTS`).
+- Names, emails, phone numbers, addresses, notes and search text are masked in the call log. Easy!Appointments error messages that echo customer records are stripped, and any email left in an error is masked, before it reaches the assistant, the call log or the application log.
+- `APP_DEBUG` is off in `.env.example`. `ea:connect` reads the API token from a prompt or `EA_API_TOKEN`, so it does not end up in shell history or the process list.
 - Logs are kept 90 days by default (`MCP_LOG_RETENTION_DAYS`).
 
 ## Known limits
 
 - The Easy!Appointments API cannot check availability while ignoring the booking being moved, so a reschedule that overlaps its own current time is refused with an explanation. Cancel and rebook in that case.
 - Cancelling deletes the booking in Easy!Appointments; there is no soft cancel in the API.
+- The slot lock covers changes made through this server. A person booking the same slot in Easy!Appointments itself at the same moment can still cause a double booking, because its API cannot reserve a slot.
+- Easy!Appointments does not store which time zone a request meant, so a provider whose time zone changes later keeps their existing bookings at the same wall-clock time.
 - One server can link several Easy!Appointments instances, one per account. There is no self-service sign-up; an administrator adds people with `ea:user`.
 
 ## Development

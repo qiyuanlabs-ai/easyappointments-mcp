@@ -14,7 +14,7 @@ use Laravel\Mcp\Server\Tools\Annotations\IsIdempotent;
 
 #[Name('cancel_appointment')]
 #[Title('Cancel an appointment')]
-#[Description('Cancels an upcoming appointment. Easy!Appointments deletes it and emails the customer a cancellation notice; this cannot be undone. Two steps: call without confirm for a preview, then with confirm: true and an idempotency_key after the person agrees.')]
+#[Description('Cancels an upcoming appointment. Easy!Appointments deletes it and emails the customer a cancellation notice; this cannot be undone. Two steps: call without confirm for a preview, then, after the person agrees, again with confirm: true, the confirmation_token from the preview and an idempotency_key.')]
 #[IsDestructive]
 #[IsIdempotent]
 class CancelAppointment extends WriteTool
@@ -34,8 +34,8 @@ class CancelAppointment extends WriteTool
             'reason' => ['nullable', 'string', 'max:300'],
         ]);
 
-        $timezone = $ea->timezone();
         $current = $ea->appointment((int) $request->get('appointment_id'));
+        $timezone = $current['timezone'];
         $start = CarbonImmutable::createFromFormat('!Y-m-d H:i', $current['start'], $timezone);
 
         if ($start->isPast()) {

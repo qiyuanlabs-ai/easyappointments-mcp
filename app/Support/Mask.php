@@ -20,6 +20,16 @@ class Mask
         return $arguments;
     }
 
+    /** Masks every email address inside free text, such as an error message that quotes one. */
+    public static function text(string $text): string
+    {
+        return preg_replace_callback(
+            '/[A-Za-z0-9._%+\-]+@[A-Za-z0-9.\-]+\.[A-Za-z]{2,}/',
+            fn (array $m) => self::string($m[0]),
+            $text,
+        ) ?? $text;
+    }
+
     public static function string(string $value): string
     {
         if (str_contains($value, '@')) {

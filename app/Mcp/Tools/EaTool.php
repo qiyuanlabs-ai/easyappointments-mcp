@@ -29,10 +29,18 @@ abstract class EaTool extends Tool
 
     abstract protected function perform(Request $request, EaClient $ea, User $user): ToolResult;
 
-    /** Hide tools the current connection may not use, so the AI never sees them. */
+    /**
+     * Before sign-in, every tool is listed so clients and directories can see what the server
+     * offers; calling one still needs a token. After sign-in, tools the connection may not use
+     * are hidden, so the AI never sees them.
+     */
     public function shouldRegister(): bool
     {
         $user = Auth::user();
+
+        if ($user === null) {
+            return true;
+        }
 
         return $user instanceof User && $this->levelFor($user)->allows($this->requires);
     }
@@ -53,7 +61,7 @@ abstract class EaTool extends Tool
 
             if (! $this->levelFor($user)->allows($this->requires)) {
                 $outcome = 'denied';
-                throw new ToolFailure('This connection only has '.$this->levelFor($user)->label().' access. Ask the person to reconnect with Front desk access to make changes.');
+                throw new ToolFailure('This connection only has '.$this->levelFor($user)->label().' access. If their account allows it, the person can raise this connection to Front desk at '.url('/dashboard').' and then ask again. Reconnecting is not needed.');
             }
 
             $connection = $user->eaConnection;
@@ -102,7 +110,7 @@ abstract class EaTool extends Tool
                 'tool' => $this->name(),
                 'arguments' => Mask::arguments($request->all()),
                 'outcome' => $outcome,
-                'error' => $error,
+                'error' => $error !== null ? Mask::text($error) : null,
                 'ea_requests' => $log->entries(),
                 'duration_ms' => (int) ((hrtime(true) - $started) / 1e6),
                 'appointment_id' => $result?->appointmentId,

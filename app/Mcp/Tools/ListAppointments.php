@@ -54,8 +54,11 @@ class ListAppointments extends EaTool
             'till' => $to,
         ]);
 
+        $zones = collect($appointments)->pluck('timezone')->unique();
+
         return new ToolResult(array_filter([
-            'timezone' => $timezone,
+            // Each appointment is in its provider's time zone and says which.
+            'timezone' => $zones->count() > 1 ? 'Differs by provider; each appointment gives its own.' : ($zones->first() ?? $timezone),
             'from' => $from,
             'to' => $to,
             'count' => count($appointments),

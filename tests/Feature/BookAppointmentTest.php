@@ -4,6 +4,7 @@ namespace Tests\Feature;
 
 use App\Mcp\Servers\EasyAppointmentsServer;
 use App\Mcp\Tools\BookAppointment;
+use App\Models\IdempotencyKey;
 use App\Models\McpCall;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Tests\Support\ConnectsMcp;
@@ -40,17 +41,18 @@ class BookAppointmentTest extends TestCase
         $this->assertSame([], $this->ea->writes());
     }
 
-    public function test_confirm_needs_an_idempotency_key(): void
+    public function test_confirm_needs_a_confirmation_token_and_an_idempotency_key(): void
     {
         EasyAppointmentsServer::tool(BookAppointment::class, $this->booking + ['confirm' => true])
-            ->assertHasErrors(['idempotency_key is required when confirm is true']);
+            ->assertHasErrors(['confirmation_token is required when confirm is true', 'idempotency_key is required when confirm is true']);
 
         $this->assertSame([], $this->ea->writes());
     }
 
     public function test_confirm_books_and_a_retry_with_the_same_key_does_not_book_twice(): void
     {
-        $confirm = $this->booking + ['confirm' => true, 'idempotency_key' => 'key-0000001'];
+        $preview = $this->structured(EasyAppointmentsServer::tool(BookAppointment::class, $this->booking));
+        $confirm = $this->booking + ['confirm' => true, 'confirmation_token' => $preview['confirmation_token'], 'idempotency_key' => 'key-0000001'];
 
         $booked = $this->structured(EasyAppointmentsServer::tool(BookAppointment::class, $confirm));
         $this->assertSame('booked', $booked['status']);
@@ -67,9 +69,9 @@ class BookAppointmentTest extends TestCase
 
     public function test_reusing_a_key_for_different_arguments_is_refused(): void
     {
-        EasyAppointmentsServer::tool(BookAppointment::class, $this->booking + ['confirm' => true, 'idempotency_key' => 'key-0000002']);
+        $this->confirmWrite(BookAppointment::class, $this->booking, 'key-0000002')->assertHasNoErrors();
 
-        EasyAppointmentsServer::tool(BookAppointment::class, ['start' => '2026-11-03 13:00', 'confirm' => true, 'idempotency_key' => 'key-0000002'] + $this->booking)
+        $this->confirmWrite(BookAppointment::class, ['start' => '2026-11-03 13:00'] + $this->booking, 'key-0000002')
             ->assertHasErrors(['already used for a different request']);
 
         $this->assertCount(1, $this->ea->appointments);
@@ -85,13 +87,14 @@ class BookAppointmentTest extends TestCase
 
     public function test_the_slot_is_checked_again_on_confirm_even_if_the_preview_was_cached(): void
     {
-        EasyAppointmentsServer::tool(BookAppointment::class, $this->booking)->assertHasNoErrors();
+        $preview = $this->structured(EasyAppointmentsServer::tool(BookAppointment::class, $this->booking));
 
         // Someone else books the slot between preview and confirmation.
         $this->ea->addAppointment(['start' => '2026-11-03 10:00', 'serviceId' => 1, 'providerId' => 10, 'customerId' => 2]);
 
-        EasyAppointmentsServer::tool(BookAppointment::class, $this->booking + ['confirm' => true, 'idempotency_key' => 'key-0000003'])
+        EasyAppointmentsServer::tool(BookAppointment::class, $this->booking + ['confirm' => true, 'confirmation_token' => $preview['confirmation_token'], 'idempotency_key' => 'key-0000003'])
             ->assertHasErrors(['is not open']);
+        $this->assertSame(0, IdempotencyKey::count(), 'A refused change frees its key.');
     }
 
     public function test_times_in_the_past_and_badly_formatted_times_are_refused(): void
@@ -114,7 +117,7 @@ class BookAppointmentTest extends TestCase
         $booking = ['new_customer' => ['first_name' => 'Taylor', 'last_name' => 'Test', 'email' => 'taylor@example.test']] + $this->booking;
         unset($booking['customer_id']);
 
-        $booked = $this->structured(EasyAppointmentsServer::tool(BookAppointment::class, $booking + ['confirm' => true, 'idempotency_key' => 'key-0000004']));
+        $booked = $this->structured($this->confirmWrite(BookAppointment::class, $booking, 'key-0000004'));
         $this->assertSame('Taylor Test', $booked['appointment']['customer']);
 
         $this->assertSame(['POST /customers', 'POST /appointments'], $this->ea->writes());
@@ -149,9 +152,10 @@ class BookAppointmentTest extends TestCase
         $booking = ['new_customer' => ['first_name' => 'Taylor', 'last_name' => 'Test', 'email' => 'taylor@example.test', 'phone' => '+1 555 0199']] + $this->booking;
         unset($booking['customer_id']);
 
-        EasyAppointmentsServer::tool(BookAppointment::class, $booking + ['confirm' => true, 'idempotency_key' => 'key-0000005']);
+        $this->confirmWrite(BookAppointment::class, $booking, 'key-0000005');
 
-        $call = McpCall::sole();
+        $this->assertSame(['preview', 'ok'], McpCall::orderBy('id')->pluck('outcome')->all());
+        $call = McpCall::where('outcome', 'ok')->sole();
         $this->assertSame('book_appointment', $call->tool);
         $this->assertSame('ok', $call->outcome);
         $this->assertSame('Claude', $call->client_name);
@@ -166,10 +170,10 @@ class BookAppointmentTest extends TestCase
 
     public function test_an_expired_idempotency_key_can_be_used_again(): void
     {
-        EasyAppointmentsServer::tool(BookAppointment::class, $this->booking + ['confirm' => true, 'idempotency_key' => 'key-0000006']);
+        $this->confirmWrite(BookAppointment::class, $this->booking, 'key-0000006');
         $this->travel(25)->hours();
 
-        EasyAppointmentsServer::tool(BookAppointment::class, ['start' => '2026-11-05 13:00'] + $this->booking + ['confirm' => true, 'idempotency_key' => 'key-0000006'])
+        $this->confirmWrite(BookAppointment::class, ['start' => '2026-11-05 13:00'] + $this->booking, 'key-0000006')
             ->assertHasNoErrors();
 
         $this->assertCount(2, $this->ea->appointments);

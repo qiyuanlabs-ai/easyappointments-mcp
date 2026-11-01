@@ -33,6 +33,10 @@
         .pill { display: inline-block; padding: 1px 8px; border-radius: 99px; font-size: 12px; border: 1px solid currentColor; }
         .ok { color: var(--ok); } .preview, .replayed { color: var(--accent); } .denied { color: var(--warn); } .error { color: var(--bad); }
         .flash { border-left: 3px solid var(--ok); }
+        .destination { padding: 14px 20px; } .destination p { margin: 0; }
+        .destination .host { font-size: 17px; font-weight: 600; overflow-wrap: anywhere; margin-top: 2px; }
+        .destination.unknown { border: 2px solid var(--bad); }
+        .destination .warning { color: var(--bad); margin-top: 10px; }
         .errors { color: var(--bad); margin-top: 8px; }
         details summary { cursor: pointer; color: var(--accent); }
     </style>

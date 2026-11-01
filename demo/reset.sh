@@ -9,9 +9,10 @@ set -a
 . ./.env.docker
 [ -f .env ] && . ./.env
 set +a
-DB_PASSWORD="${EA_DB_ROOT_PASSWORD:-change-me}"
+# Passed through the environment so the password never shows in the process list.
+export MYSQL_PWD="${EA_DB_ROOT_PASSWORD:-change-me}"
 
-docker compose exec -T ea-db mysql -uroot -p"$DB_PASSWORD" easyappointments 2>/dev/null <<'SQL'
+docker compose exec -T -e MYSQL_PWD ea-db mysql -uroot easyappointments 2>/dev/null <<'SQL'
 SET FOREIGN_KEY_CHECKS = 0;
 DELETE FROM ea_appointments;
 DELETE FROM ea_services_providers;

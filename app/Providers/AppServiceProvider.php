@@ -25,12 +25,29 @@ class AppServiceProvider extends ServiceProvider
             TrustProxies::at($proxies === '*' ? '*' : array_map('trim', explode(',', $proxies)));
         }
 
-        Passport::authorizationView(fn (array $parameters) => view('consent', $parameters + [
-            'levels' => AccessLevel::cases(),
-        ]));
+        Passport::authorizationView(function (array $parameters) {
+            // Passport has already checked redirect_uri against the client's registered ones.
+            $client = $parameters['client'];
+            $redirect = (string) ($parameters['request']->query('redirect_uri') ?: ($client->redirect_uris[0] ?? ''));
+            $host = mb_strtolower((string) (parse_url($redirect, PHP_URL_HOST) ?: $redirect));
+
+            return view('consent', $parameters + [
+                'levels' => AccessLevel::cases(),
+                'redirectHost' => $host,
+                'knownClient' => collect(config('easyappointments.known_client_hosts'))
+                    ->contains(fn (string $known) => $host === $known || str_ends_with($host, '.'.$known)),
+            ]);
+        });
 
         Passport::tokensExpireIn(now()->addHours(1));
         Passport::refreshTokensExpireIn(now()->addDays(30));
+
+        RateLimiter::for('oauth-register', fn (Request $request) => Limit::perHour(config('easyappointments.registrations_per_hour'))
+            ->by($request->ip())
+            ->response(fn () => response()->json([
+                'error' => 'too_many_requests',
+                'error_description' => 'Too many client registrations from this address. Try again later.',
+            ], 429)));
 
         RateLimiter::for('mcp', fn (Request $request) => Limit::perMinute(config('easyappointments.requests_per_minute'))
             ->by($request->user()?->id ?: $request->ip()));

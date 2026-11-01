@@ -20,10 +20,10 @@ use Laravel\Mcp\Server\Attributes\Version;
 Front-desk tools for an Easy!Appointments booking system.
 
 - Start with list_services to get service and provider ids.
-- All times are in the business time zone given in each result. Say the time zone when you tell the person a time.
+- Times are in the provider's time zone, given in each result. Say the time zone when you tell the person a time.
 - Use find_open_slots before booking or rescheduling. Use find_customer before booking for someone who may already be a customer, and ask which person is meant if several match.
-- book_appointment, reschedule_appointment and cancel_appointment work in two steps. First call without confirm and show the person the preview. Only after they clearly agree, call again with confirm: true and a new idempotency_key. Never confirm on your own.
-- If a tool is missing, this connection has read-only access. Tell the person they can reconnect with Front desk access.
+- book_appointment, reschedule_appointment and cancel_appointment work in two steps. First call without confirm and show the person the preview. Only after they clearly agree, call again with the same arguments, confirm: true, the confirmation_token from the preview and a new idempotency_key. Never confirm on your own.
+- If a change is refused because the connection is read-only, tell the person they can raise it to Front desk on the server's dashboard, then try again.
 MD)]
 class EasyAppointmentsServer extends Server
 {

@@ -35,6 +35,8 @@ class MaskAndMessagesTest extends TestCase
         $this->assertStringNotContainsString('taylor', $clean);
         $this->assertSame('The selected time is not available', EaClient::cleanMessage('The selected time is not available.'));
         $this->assertSame('invalid data', EaClient::cleanMessage(null));
+        // Some messages quote the customer's email; it must not reach the model, the log or the CSV.
+        $this->assertSame('The provided email address is already in use: o***@example.test', EaClient::cleanMessage('The provided email address is already in use: olivia.bennett@example.test.'));
     }
 
     public function test_access_levels_cap_and_allow(): void

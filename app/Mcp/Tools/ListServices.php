@@ -41,7 +41,7 @@ class ListServices extends EaTool
                 'description' => $s['description'],
                 'providers' => collect($providers)
                     ->filter(fn ($p) => in_array($s['id'], $p['services'], true))
-                    ->map(fn ($p) => ['id' => $p['id'], 'name' => $p['name']])->values()->all(),
+                    ->map(fn ($p) => ['id' => $p['id'], 'name' => $p['name'], 'timezone' => $p['timezone']])->values()->all(),
             ])->values()->all();
 
         return new ToolResult([

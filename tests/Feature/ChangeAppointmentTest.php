@@ -30,7 +30,7 @@ class ChangeAppointmentTest extends TestCase
         $this->assertSame(['2026-11-03 10:00', '2026-11-04 13:00', 'Wednesday'], [$preview['from']['start'], $preview['to']['start'], $preview['to']['weekday']]);
         $this->assertSame([], $this->ea->writes());
 
-        $done = $this->structured(EasyAppointmentsServer::tool(RescheduleAppointment::class, $move + ['confirm' => true, 'idempotency_key' => 'move-000001']));
+        $done = $this->structured($this->confirmWrite(RescheduleAppointment::class, $move, 'move-000001'));
         $this->assertSame('rescheduled', $done['status']);
         $this->assertSame('2026-11-04 13:00', $done['appointment']['start']);
         $this->assertSame('2026-11-04 14:00', $done['appointment']['end']);
@@ -72,12 +72,13 @@ class ChangeAppointmentTest extends TestCase
         $this->assertSame('Olivia Bennett', $preview['appointment']['customer']);
         $this->assertSame([], $this->ea->writes());
 
-        $done = $this->structured(EasyAppointmentsServer::tool(CancelAppointment::class, ['appointment_id' => $this->id, 'reason' => 'Feeling better', 'confirm' => true, 'idempotency_key' => 'cancel-00001']));
+        $confirm = ['appointment_id' => $this->id, 'reason' => 'Feeling better', 'confirm' => true, 'confirmation_token' => $preview['confirmation_token'], 'idempotency_key' => 'cancel-00001'];
+        $done = $this->structured(EasyAppointmentsServer::tool(CancelAppointment::class, $confirm));
         $this->assertSame('cancelled', $done['status']);
         $this->assertSame([], $this->ea->appointments);
 
         // A retry after a dropped connection gets the same answer instead of a "not found".
-        $again = $this->structured(EasyAppointmentsServer::tool(CancelAppointment::class, ['appointment_id' => $this->id, 'reason' => 'Feeling better', 'confirm' => true, 'idempotency_key' => 'cancel-00001']));
+        $again = $this->structured(EasyAppointmentsServer::tool(CancelAppointment::class, $confirm));
         $this->assertTrue($again['replayed']);
         $this->assertSame(["DELETE /appointments/{$this->id}"], $this->ea->writes());
     }

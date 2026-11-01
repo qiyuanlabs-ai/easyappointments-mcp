@@ -13,7 +13,7 @@ use Laravel\Mcp\Server\Tools\Annotations\IsIdempotent;
 
 #[Name('book_appointment')]
 #[Title('Book an appointment')]
-#[Description('Books an appointment for an existing customer (customer_id) or a new one (new_customer). Two steps: first call without confirm to get a preview and show it to the person; only after they agree, call again with confirm: true and an idempotency_key. Easy!Appointments then sends its usual confirmation emails.')]
+#[Description('Books an appointment for an existing customer (customer_id) or a new one (new_customer). Two steps: first call without confirm to get a preview and show it to the person; only after they agree, call again with the same arguments, confirm: true, the confirmation_token from the preview and an idempotency_key. Easy!Appointments then sends its usual confirmation emails.')]
 #[IsDestructive(false)]
 #[IsIdempotent]
 class BookAppointment extends WriteTool
@@ -23,7 +23,7 @@ class BookAppointment extends WriteTool
         return [
             'service_id' => $schema->integer()->description('From list_services.')->required(),
             'provider_id' => $schema->integer()->description('From list_services or find_open_slots.')->required(),
-            'start' => $schema->string()->pattern('^\d{4}-\d{2}-\d{2} \d{2}:\d{2}$')->description('Start time "YYYY-MM-DD HH:MM" in the business time zone, exactly as find_open_slots returned it.')->required(),
+            'start' => $schema->string()->pattern('^\d{4}-\d{2}-\d{2} \d{2}:\d{2}$')->description('Start time "YYYY-MM-DD HH:MM" in the provider\'s time zone, exactly as find_open_slots returned it.')->required(),
             'customer_id' => $schema->integer()->description('An existing customer, from find_customer. Give this or new_customer.'),
             'new_customer' => $schema->object([
                 'first_name' => $schema->string()->required(),
@@ -59,10 +59,10 @@ class BookAppointment extends WriteTool
             'customer_id.prohibits' => 'Give customer_id or new_customer, not both.',
         ]);
 
-        $timezone = $ea->timezone();
         [$service, $provider] = $this->serviceOffered($ea, (int) $request->get('service_id'), (int) $request->get('provider_id'));
+        $timezone = $provider['timezone'];
         $start = $this->futureTime($request->get('start'), $timezone, 'start');
-        $this->assertSlotOpen($ea, $provider, $service, $start, $confirming);
+        $this->assertSlotOpen($ea, $provider, $service, $start, false);
 
         $newCustomer = $request->get('new_customer');
         $customer = null;
@@ -126,6 +126,9 @@ class BookAppointment extends WriteTool
                 'timezone' => $timezone,
                 'appointment' => array_merge($appointment, ['customer' => $customer['name']]),
             ];
-        });
+        },
+            lock: $this->slotLock($ea, $provider['id'], $start),
+            recheck: fn () => $this->assertSlotOpen($ea, $provider, $service, $start, true),
+        );
     }
 }

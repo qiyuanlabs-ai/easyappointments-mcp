@@ -1,8 +1,8 @@
 {
     "$schema": "https://getcomposer.org/schema.json",
-    "name": "laravel/laravel",
+    "name": "qiyuanlabs-ai/easyappointments-mcp",
     "type": "project",
-    "description": "The skeleton application for the Laravel framework.",
+    "description": "A remote MCP server that gives AI assistants safe front-desk tools for Easy!Appointments.",
     "keywords": ["laravel", "framework"],
     "license": "MIT",
     "require": {

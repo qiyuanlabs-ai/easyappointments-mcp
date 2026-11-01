@@ -3,6 +3,7 @@
 namespace Tests\Support;
 
 use App\Enums\AccessLevel;
+use App\Mcp\Servers\EasyAppointmentsServer;
 use App\Models\EaConnection;
 use App\Models\McpGrant;
 use App\Models\User;
@@ -33,6 +34,19 @@ trait ConnectsMcp
         McpGrant::create(['user_id' => $this->user->id, 'oauth_client_id' => $client->getKey(), 'client_name' => 'Claude', 'access_level' => $granted]);
 
         Passport::actingAs($this->user, ['mcp:use'], 'api', $client);
+    }
+
+    /**
+     * Calls a write tool the way a client should: preview first, then confirm with the
+     * preview's confirmation_token and the given idempotency key.
+     *
+     * @param  class-string  $tool
+     */
+    protected function confirmWrite(string $tool, array $arguments, string $key): TestResponse
+    {
+        $preview = $this->structured(EasyAppointmentsServer::tool($tool, $arguments));
+
+        return EasyAppointmentsServer::tool($tool, $arguments + ['confirm' => true, 'confirmation_token' => $preview['confirmation_token'], 'idempotency_key' => $key]);
     }
 
     /** The structured result of a successful tool call, as an array. */

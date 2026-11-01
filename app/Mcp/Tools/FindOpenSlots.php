@@ -14,7 +14,7 @@ use Laravel\Mcp\Server\Tools\Annotations\IsReadOnly;
 
 #[Name('find_open_slots')]
 #[Title('Find open appointment slots')]
-#[Description('Finds open start times for one service over a range of days, across every provider who offers it or just one. Times are in the business time zone returned in the result. Use this before booking or rescheduling.')]
+#[Description('Finds open start times for one service over a range of days, across every provider who offers it or just one. Times are in the time zone of each provider, given in the result. Use this before booking or rescheduling.')]
 #[IsReadOnly]
 class FindOpenSlots extends EaTool
 {
@@ -25,7 +25,7 @@ class FindOpenSlots extends EaTool
         return [
             'service_id' => $schema->integer()->description('The service, from list_services.')->required(),
             'provider_id' => $schema->integer()->description('Optional: only this provider.'),
-            'date_from' => $schema->string()->format('date')->description('First day to search, YYYY-MM-DD. Defaults to today in the business time zone.'),
+            'date_from' => $schema->string()->format('date')->description('First day to search, YYYY-MM-DD. Defaults to today.'),
             'days' => $schema->integer()->min(1)->max(14)->default(7)->description('How many days to search, 1 to 14. Default 7.'),
             'part_of_day' => $schema->string()->enum(['any', 'morning', 'afternoon', 'evening'])->default('any')->description('morning is before 12:00, afternoon 12:00 to 17:00, evening from 17:00.'),
         ];
@@ -77,13 +77,22 @@ class FindOpenSlots extends EaTool
         $lookups = $dates->crossJoin($providers->pluck('id'))->map(fn ($pair) => [$pair[1], $service['id'], $pair[0]])->all();
         $hours = $ea->availabilityMany($lookups);
         $names = $providers->pluck('name', 'id');
+        $zones = $providers->pluck('timezone', 'id');
+        // Easy!Appointments answers in each provider's own time zone. Usually they all share one.
+        $oneZone = $zones->unique()->count() === 1 ? $zones->first() : null;
         $part = $request->get('part_of_day') ?? 'any';
+        $now = CarbonImmutable::now();
 
         $byDay = [];
         foreach ($lookups as $i => [$providerId, , $date]) {
             foreach ($hours[$i] as $time) {
-                if ($this->inPartOfDay($time, $part)) {
-                    $byDay[$date][] = ['time' => $time, 'provider_id' => $providerId, 'provider' => $names[$providerId]];
+                if ($this->inPartOfDay($time, $part) && CarbonImmutable::parse("$date $time", $zones[$providerId])->gt($now)) {
+                    $byDay[$date][] = array_filter([
+                        'time' => $time,
+                        'provider_id' => $providerId,
+                        'provider' => $names[$providerId],
+                        'timezone' => $oneZone === null ? $zones[$providerId] : null,
+                    ], fn ($v) => $v !== null);
                 }
             }
         }
@@ -108,7 +117,7 @@ class FindOpenSlots extends EaTool
         }
 
         return new ToolResult(array_filter([
-            'timezone' => $timezone,
+            'timezone' => $oneZone ?? 'Differs by provider; each slot gives its own.',
             'service' => ['id' => $service['id'], 'name' => $service['name'], 'duration_minutes' => $service['duration']],
             'from' => $dates->first(),
             'to' => $dates->last(),

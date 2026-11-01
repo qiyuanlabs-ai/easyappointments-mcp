@@ -159,7 +159,7 @@ class ConsentAndDashboardTest extends TestCase
 
     public function test_unauthenticated_mcp_requests_get_a_401_pointing_at_the_oauth_metadata(): void
     {
-        $this->postJson('/mcp', ['jsonrpc' => '2.0', 'id' => 1, 'method' => 'initialize'])
+        $this->postJson('/mcp', ['jsonrpc' => '2.0', 'id' => 1, 'method' => 'tools/call', 'params' => ['name' => 'list_services']])
             ->assertUnauthorized()
             ->assertHeader('WWW-Authenticate');
 

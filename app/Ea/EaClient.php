@@ -3,12 +3,14 @@
 namespace App\Ea;
 
 use App\Models\EaConnection;
+use App\Support\Mask;
 use Illuminate\Http\Client\ConnectionException;
 use Illuminate\Http\Client\PendingRequest;
 use Illuminate\Http\Client\Pool;
 use Illuminate\Http\Client\Response;
 use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\Http;
+use Illuminate\Support\Facades\RateLimiter;
 
 /**
  * A small, typed client for the Easy!Appointments REST API v1.
@@ -39,20 +41,38 @@ class EaClient
         });
     }
 
-    /** @return list<array{id: int, name: string, services: list<int>}> */
+    /** @return list<array{id: int, name: string, services: list<int>, timezone: string}> */
     public function providers(): array
     {
-        return $this->remember('providers', config('easyappointments.catalog_cache_seconds'), function () {
-            return collect($this->get('/providers', ['length' => 500, 'fields' => 'id,firstName,lastName,services']))
+        return $this->remember('providers.v2', config('easyappointments.catalog_cache_seconds'), function () {
+            $default = $this->timezone();
+
+            return collect($this->get('/providers', ['length' => 500, 'fields' => 'id,firstName,lastName,services,timezone']))
                 ->map(fn (array $p) => [
                     'id' => (int) $p['id'],
                     'name' => trim($p['firstName'].' '.$p['lastName']),
                     'services' => array_map('intval', $p['services'] ?? []),
+                    'timezone' => self::validTimezone($p['timezone'] ?? null) ?? $default,
                 ])->values()->all();
         });
     }
 
-    /** The instance's time zone. All appointment times in Easy!Appointments are in this zone. */
+    /**
+     * The time zone a provider works in. Easy!Appointments stores each appointment, and answers
+     * availability, in the provider's own time zone, which can differ from the business default.
+     */
+    public function providerTimezone(int $providerId): string
+    {
+        return $this->provider($providerId)['timezone'] ?? $this->timezone();
+    }
+
+    /** Identifies the linked instance, for locks that must be shared by everyone using it. */
+    public function connectionId(): int
+    {
+        return $this->connection->id;
+    }
+
+    /** The business default time zone (Settings > General). Providers may override it. */
     public function timezone(): string
     {
         return $this->remember('timezone', config('easyappointments.catalog_cache_seconds'), function () {
@@ -62,8 +82,13 @@ class EaClient
                 $value = null;
             }
 
-            return is_string($value) && in_array($value, timezone_identifiers_list(), true) ? $value : 'UTC';
+            return self::validTimezone($value) ?? 'UTC';
         });
+    }
+
+    private static function validTimezone(mixed $value): ?string
+    {
+        return is_string($value) && in_array($value, timezone_identifiers_list(), true) ? $value : null;
     }
 
     /**
@@ -124,6 +149,7 @@ class EaClient
         }
 
         if ($missing !== []) {
+            $this->spend(count($missing));
             $started = hrtime(true);
 
             try {
@@ -253,6 +279,7 @@ class EaClient
             'service' => $service['name'] ?? null,
             'provider_id' => (int) $a['providerId'],
             'provider' => $provider['name'] ?? null,
+            'timezone' => $provider['timezone'] ?? $this->timezone(),
             'customer_id' => $a['customerId'] !== null ? (int) $a['customerId'] : null,
             'customer' => isset($a['customer']['first_name']) ? trim($a['customer']['first_name'].' '.$a['customer']['last_name']) : null,
             'notes' => $a['notes'] ?? null,
@@ -267,8 +294,24 @@ class EaClient
         return is_array($result) ? $result : [];
     }
 
+    /**
+     * Easy!Appointments allows a fixed number of requests per IP, and every person using this
+     * server shares one IP. Count requests per linked instance across everyone, and refuse
+     * before Easy!Appointments starts locking the whole server out.
+     */
+    private function spend(int $requests): void
+    {
+        $key = 'ea-budget:'.$this->connection->id;
+        $window = config('easyappointments.request_budget_seconds');
+
+        if (RateLimiter::increment($key, $window, $requests) > config('easyappointments.request_budget')) {
+            throw new EaApiException('Too many requests to Easy!Appointments from everyone using this server in the last two minutes. Try again in '.max(1, RateLimiter::availableIn($key)).' seconds, or ask for fewer days or one provider.', 429);
+        }
+    }
+
     private function send(string $method, string $path, array $payload = []): mixed
     {
+        $this->spend(1);
         $started = hrtime(true);
         $request = $this->configure(Http::baseUrl($this->connection->apiUrl()));
 
@@ -313,11 +356,11 @@ class EaClient
         $position = strpos($message, 'Array');
 
         if ($position === false) {
-            return rtrim(trim(mb_substr($message, 0, 300)), '.');
+            return Mask::text(rtrim(trim(mb_substr($message, 0, 300)), '.'));
         }
 
         preg_match_all('/\[(\w+)\] => *$/m', substr($message, $position), $empty);
-        $head = rtrim(trim(substr($message, 0, $position)), ':. ');
+        $head = Mask::text(rtrim(trim(substr($message, 0, $position)), ':. '));
 
         return $empty[1] === [] ? $head : $head.' (missing: '.implode(', ', $empty[1]).')';
     }

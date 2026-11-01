@@ -2,6 +2,7 @@
 
 namespace Tests\Support;
 
+use Illuminate\Http\Client\ConnectionException;
 use Illuminate\Http\Client\Request;
 use Illuminate\Support\Facades\Http;
 
@@ -27,8 +28,8 @@ class FakeEasyAppointments
     ];
 
     public array $providers = [
-        ['id' => 10, 'firstName' => 'Anna', 'lastName' => 'Kim', 'services' => [1, 2]],
-        ['id' => 11, 'firstName' => 'Marcus', 'lastName' => 'Reed', 'services' => [1]],
+        ['id' => 10, 'firstName' => 'Anna', 'lastName' => 'Kim', 'services' => [1, 2], 'timezone' => 'America/New_York'],
+        ['id' => 11, 'firstName' => 'Marcus', 'lastName' => 'Reed', 'services' => [1], 'timezone' => 'America/New_York'],
     ];
 
     public array $customers = [
@@ -38,8 +39,13 @@ class FakeEasyAppointments
 
     public array $appointments = [];
 
+    private int $nextId = 100;
+
     /** Open start times per "providerId|date". Days not listed get the default hours. */
     public array $open = [];
+
+    /** When true, creating an appointment saves it but the answer never arrives (a timeout). */
+    public bool $loseWriteAnswers = false;
 
     /** When set, every request fails with this HTTP status. */
     public ?int $failWith = null;
@@ -97,7 +103,7 @@ class FakeEasyAppointments
 
     public function addAppointment(array $attributes): array
     {
-        $id = count($this->appointments) + 100;
+        $id = $this->nextId++;
         $service = collect($this->services)->firstWhere('id', $attributes['serviceId']);
         $start = new \DateTimeImmutable($attributes['start']);
 
@@ -161,13 +167,19 @@ class FakeEasyAppointments
             ->values()->all();
     }
 
+    /**
+     * Like the real API (Appointments_api_v1::store in 1.6.1), this saves whatever it is given:
+     * it never checks the slot is free, so double bookings are the MCP server's job to prevent.
+     */
     private function createAppointment(array $data)
     {
-        if (! in_array(substr($data['start'], 11, 5), $this->openTimes((int) $data['providerId'], substr($data['start'], 0, 10)), true)) {
-            return Http::response(['message' => 'The selected time is not available.'], 400);
+        $appointment = $this->addAppointment($data);
+
+        if ($this->loseWriteAnswers) {
+            throw new ConnectionException('Operation timed out');
         }
 
-        return Http::response($this->addAppointment($data), 201);
+        return Http::response($appointment, 201);
     }
 
     private function appointmentRoute(string $method, int $id, array $data)

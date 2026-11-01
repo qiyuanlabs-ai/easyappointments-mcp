@@ -58,8 +58,25 @@ function check(bool $ok, string $what, ?array $result = null): void
     $failures += $ok ? 0 : 1;
 }
 
+echo "Before sign-in\n";
+$anon = fn (string $method) => http('POST', "$base/mcp", [
+    'headers' => ['Accept: application/json, text/event-stream', 'MCP-Protocol-Version: 2025-06-18'],
+    'json' => ['jsonrpc' => '2.0', 'id' => 1, 'method' => $method, 'params' => $method === 'tools/call'
+        ? ['name' => 'list_services', 'arguments' => (object) []]
+        : ['protocolVersion' => '2025-06-18', 'capabilities' => (object) [], 'clientInfo' => ['name' => 'e2e', 'version' => '1']]],
+]);
+$sse = fn (string $body) => json_decode(preg_match_all('/^data: (.*)$/m', $body, $m) ? end($m[1]) : $body, true);
+$r = $anon('initialize');
+check($r['status'] === 200 && ($sse($r['body'])['result']['serverInfo']['name'] ?? '') === 'Easy!Appointments', 'initialize works without a token');
+$r = $anon('tools/list');
+check($r['status'] === 200 && count($sse($r['body'])['result']['tools'] ?? []) === 7, 'tools/list shows all 7 tools without a token');
+$r = $anon('tools/call');
+check($r['status'] === 401 && preg_match('/^www-authenticate:.*resource_metadata=/mi', $r['head']) === 1, 'tools/call without a token gets 401 with WWW-Authenticate, which starts sign-in');
+
 echo "OAuth\n";
 $redirect = 'http://127.0.0.1:33418/callback';
+$bad = http('POST', "$base/oauth/register", ['json' => ['client_name' => 'E2E bad redirect', 'redirect_uris' => ['http://evil.example/callback']]]);
+check($bad['status'] === 400, 'registration refuses a plain-http redirect to another host');
 $client = json_decode(http('POST', "$base/oauth/register", ['json' => ['client_name' => 'E2E test client', 'redirect_uris' => [$redirect]]])['body'], true);
 check(isset($client['client_id']), 'dynamic client registration');
 
@@ -79,6 +96,7 @@ check($r['status'] === 302 && str_contains((string) $r['location'], '/oauth/auth
 
 $consent = http('GET', $r['location']);
 check(str_contains($consent['body'], 'What may it do?'), 'consent screen asks for an access level');
+check(str_contains($consent['body'], 'name not verified') && str_contains($consent['body'], '127.0.0.1'), 'consent screen marks the client name unverified and shows where it sends you');
 $r = http('POST', "$base/oauth/consent", ['form' => [
     '_token' => field($consent['body'], '_token'), 'auth_token' => field($consent['body'], 'auth_token'),
     'access_level' => $level,
@@ -150,7 +168,7 @@ function parallel_tools(array $calls): array
             $body = end($m[1]);
         }
         $result = json_decode($body, true)['result'] ?? null;
-        $results[] = ['error' => $result === null || ($result['isError'] ?? false), 'text' => $result['content'][0]['text'] ?? "HTTP $code ".substr($body, 0, 200)];
+        $results[] = ['error' => $result === null || ($result['isError'] ?? false), 'data' => $result['structuredContent'] ?? null, 'text' => $result['content'][0]['text'] ?? "HTTP $code ".substr($body, 0, 200)];
         curl_multi_remove_handle($mh, $ch);
     }
     curl_multi_close($mh);
@@ -208,13 +226,24 @@ $booking['new_customer']['phone'] = '+1 555 0100';
 $preview = tool('book_appointment', $booking);
 check(! $preview['error'] && $preview['data']['status'] === 'preview', "book_appointment preview: {$booking['start']} with {$slot['provider']}");
 
+$noToken = tool('book_appointment', $booking + ['confirm' => true, 'idempotency_key' => bin2hex(random_bytes(8))]);
+check($noToken['error'] && str_contains($noToken['text'], 'confirmation_token is required'), 'confirm without the preview\'s confirmation_token is refused', $noToken);
+$ok = $booking + ['confirm' => true, 'confirmation_token' => $preview['data']['confirmation_token'] ?? ''];
+
+// The same confirmation sent three times at once with one key, as a client retrying a slow call would.
 $key = bin2hex(random_bytes(8));
-$booked = tool('book_appointment', $booking + ['confirm' => true, 'idempotency_key' => $key]);
-check(! $booked['error'] && $booked['data']['status'] === 'booked', 'book_appointment confirmed: appointment #'.($booked['data']['appointment']['id'] ?? '?'));
-$replay = tool('book_appointment', $booking + ['confirm' => true, 'idempotency_key' => $key]);
-check(! $replay['error'] && ($replay['data']['replayed'] ?? false) && $replay['data']['appointment']['id'] === $booked['data']['appointment']['id'], 'same idempotency_key replays instead of booking twice', $replay);
-$again = tool('book_appointment', $booking + ['confirm' => true, 'idempotency_key' => bin2hex(random_bytes(8))]);
+$burst = parallel_tools(array_fill(0, 3, ['book_appointment', $ok + ['idempotency_key' => $key]]));
+$made = array_values(array_filter($burst, fn ($r) => ! $r['error'] && ($r['data']['status'] ?? '') === 'booked' && ! ($r['data']['replayed'] ?? false)));
+check(count($made) === 1, '3 parallel confirms with the same idempotency_key book once', $burst[0]);
+$booked = $made[0] ?? tool('book_appointment', $ok + ['idempotency_key' => $key]);
+$replay = tool('book_appointment', $ok + ['idempotency_key' => $key]);
+check(! $replay['error'] && ($replay['data']['replayed'] ?? false) && $replay['data']['appointment']['id'] === ($booked['data']['appointment']['id'] ?? null), 'same idempotency_key replays instead of booking twice', $replay);
+$again = tool('book_appointment', $ok + ['idempotency_key' => bin2hex(random_bytes(8))]);
 check($again['error'] && str_contains($again['text'], 'not open'), 'a second booking for the taken slot is refused', $again);
+
+$taken = tool('list_appointments', ['provider_id' => $slot['provider_id'], 'date_from' => $slot['date'], 'date_to' => $slot['date']]);
+$atSlot = array_filter($taken['data']['appointments'] ?? [], fn ($a) => $a['start'] === $booking['start']);
+check(count($atSlot) === 1, 'Easy!Appointments has exactly one appointment in that slot', $taken);
 
 $appointmentId = $booked['data']['appointment']['id'];
 $list = tool('list_appointments', ['customer_id' => $booked['data']['appointment']['customer_id']]);
@@ -231,15 +260,35 @@ foreach ($move['data']['days'] as $day) {
 $reschedule = ['appointment_id' => $appointmentId, 'new_start' => $newStart];
 $p = tool('reschedule_appointment', $reschedule);
 check(! $p['error'] && $p['data']['status'] === 'preview', "reschedule_appointment preview to $newStart");
-$r = tool('reschedule_appointment', $reschedule + ['confirm' => true, 'idempotency_key' => bin2hex(random_bytes(8))]);
+$r = tool('reschedule_appointment', $reschedule + ['confirm' => true, 'confirmation_token' => $p['data']['confirmation_token'] ?? '', 'idempotency_key' => bin2hex(random_bytes(8))]);
 check(! $r['error'] && ($r['data']['appointment']['start'] ?? '') === $newStart, 'reschedule_appointment confirmed', $r);
 
 $p = tool('cancel_appointment', ['appointment_id' => $appointmentId, 'reason' => 'E2E clean-up']);
 check(! $p['error'] && $p['data']['status'] === 'preview', 'cancel_appointment preview', $p);
-$c = tool('cancel_appointment', ['appointment_id' => $appointmentId, 'reason' => 'E2E clean-up', 'confirm' => true, 'idempotency_key' => bin2hex(random_bytes(8))]);
+$c = tool('cancel_appointment', ['appointment_id' => $appointmentId, 'reason' => 'E2E clean-up', 'confirm' => true, 'confirmation_token' => $p['data']['confirmation_token'] ?? '', 'idempotency_key' => bin2hex(random_bytes(8))]);
 check(! $c['error'] && ($c['data']['status'] ?? null) === 'cancelled', 'cancel_appointment confirmed', $c);
 $gone = tool('list_appointments', ['customer_id' => $booked['data']['appointment']['customer_id']]);
 check(! $gone['error'] && ! in_array($appointmentId, array_column($gone['data']['appointments'] ?? [], 'id'), true), 'the cancelled appointment is gone', $gone);
+
+// Two different people confirm the same free slot at the same moment (different keys).
+$race = null;
+foreach ($move['data']['days'] as $day) {
+    foreach ($day['slots'] as $s) {
+        if ("{$day['date']} {$s['time']}" !== $newStart) {
+            $race = ['service_id' => $service['id'], 'provider_id' => $slot['provider_id'], 'start' => "{$day['date']} {$s['time']}", 'customer_id' => $booked['data']['appointment']['customer_id'], 'notes' => 'Race check by the end-to-end script'];
+            break 2;
+        }
+    }
+}
+$rp = tool('book_appointment', $race);
+$raceOk = $race + ['confirm' => true, 'confirmation_token' => $rp['data']['confirmation_token'] ?? ''];
+$burst = parallel_tools([['book_appointment', $raceOk + ['idempotency_key' => bin2hex(random_bytes(8))]], ['book_appointment', $raceOk + ['idempotency_key' => bin2hex(random_bytes(8))]], ['book_appointment', $raceOk + ['idempotency_key' => bin2hex(random_bytes(8))]]]);
+$won = array_values(array_filter($burst, fn ($r) => ! $r['error']));
+check(count($won) === 1, '3 parallel confirms for one slot with different keys book it once (the others are refused)', $won[1] ?? $burst[0]);
+foreach ($won as $w) {
+    $cp = tool('cancel_appointment', ['appointment_id' => $w['data']['appointment']['id']]);
+    tool('cancel_appointment', ['appointment_id' => $w['data']['appointment']['id'], 'confirm' => true, 'confirmation_token' => $cp['data']['confirmation_token'] ?? '', 'idempotency_key' => bin2hex(random_bytes(8))]);
+}
 
 $missing = tool('book_appointment', ['service_id' => $service['id'], 'provider_id' => $slot['provider_id'], 'start' => '2020-01-01 09:00', 'customer_id' => 1]);
 check($missing['error'] && str_contains($missing['text'], 'past'), 'a time in the past is refused with a clear message', $missing);
