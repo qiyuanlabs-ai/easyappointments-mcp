@@ -285,10 +285,53 @@ class ConfirmSafetyTest extends TestCase
         $token = $this->preview($booking);
         $this->failLookupsAfterTheWrite(new \RuntimeException('Something unexpected'));
 
-        $this->confirm($booking, $token, 'key-read-boom')->assertHasErrors(['Easy!Appointments made the change', 'Do not repeat it']);
+        $saved = $this->structured($this->confirm($booking, $token, 'key-read-boom'));
+        $this->assertSame('saved', $saved['status']);
+        $this->assertStringContainsString('Do not repeat it', $saved['note']);
 
         $this->assertSame(['POST /customers', 'POST /appointments'], $this->ea->writes(), 'The new customer is not deleted.');
         $this->assertCount(1, $this->ea->appointments);
-        $this->assertFalse(IdempotencyKey::sole()->isCompleted(), 'The key stays claimed, so a retry cannot book again.');
+        $this->assertTrue(IdempotencyKey::sole()->isCompleted(), 'The key records that the change was made.');
+
+        // A retry with the same key replays that answer at once instead of "still being processed".
+        $this->ea->onRequest = null;
+        $again = $this->structured($this->confirm($booking, $token, 'key-read-boom'));
+        $this->assertTrue($again['replayed']);
+        $this->assertSame('saved', $again['status']);
+        $this->assertCount(1, $this->ea->appointments);
+    }
+
+    public function test_open_times_read_while_a_booking_lands_are_not_cached_as_current(): void
+    {
+        $args = ['service_id' => 1, 'provider_id' => 10, 'days' => 1, 'date_from' => '2026-11-03'];
+        $times = fn () => collect($this->structured(EasyAppointmentsServer::tool(FindOpenSlots::class, $args))['days'][0]['slots'])->pluck('time')->all();
+        $connection = $this->user->ea_connection_id;
+
+        // Easy!Appointments answers that 10:00 is open, then another change books 10:00 and
+        // clears the provider's cached times before this answer is stored.
+        $this->ea->afterAnswer = function (string $request) use ($connection) {
+            if (str_starts_with($request, 'GET /availabilities') && $this->ea->appointments === []) {
+                $this->ea->addAppointment(['start' => '2026-11-03 10:00', 'serviceId' => 1, 'providerId' => 10, 'customerId' => 2]);
+                Cache::put("ea:$connection:slots-version:10:2026-11-03", 'after-booking', 120);
+            }
+        };
+
+        $this->assertContains('10:00', $times(), 'The answer that was already on its way still shows 10:00.');
+        $this->assertNotContains('10:00', $times(), 'The next search asks again instead of serving that stale answer.');
+    }
+
+    public function test_the_check_under_the_lock_neither_reads_nor_writes_the_cache(): void
+    {
+        $token = $this->preview($this->booking);
+        $key = 'ea:'.$this->user->ea_connection_id.':slots:10:1:2026-11-03:0';
+        $this->assertContains('10:00', Cache::get($key), 'The preview cached the open times.');
+
+        // Easy!Appointments now has 10:00 taken, but the cache still says it is open.
+        $this->ea->addAppointment(['start' => '2026-11-03 10:00', 'serviceId' => 1, 'providerId' => 10, 'customerId' => 2]);
+        $cached = Cache::get($key);
+
+        $this->confirm($this->booking, $token, 'key-fresh-01')->assertHasErrors(['10:00 is not open']);
+        $this->assertSame($cached, Cache::get($key), 'The fresh check did not write its answer into the cache.');
+        $this->assertCount(1, $this->ea->appointments);
     }
 }

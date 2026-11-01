@@ -125,7 +125,16 @@ abstract class WriteTool extends EaTool
             });
         } catch (Throwable $e) {
             if ($changed) {
-                throw new ToolFailure('Easy!Appointments made the change, but reading back its details failed. Do not repeat it: check the result with list_appointments.');
+                // The change is made. Record that on the key, so a retry with it gets this answer
+                // again instead of waiting on a key that looks unfinished.
+                $result = [
+                    'status' => 'saved',
+                    'appointment_id' => $change->appointmentId,
+                    'note' => 'Easy!Appointments made the change, but reading back its details failed. Do not repeat it: check the result with list_appointments.',
+                ];
+                $claim->update(['result' => $result, 'completed_at' => now()]);
+
+                return new ToolResult($result, 'ok', $change->appointmentId);
             }
 
             if ($outcomeUnknown) {
@@ -222,17 +231,14 @@ abstract class WriteTool extends EaTool
 
     /**
      * Confirms a start time is open for the provider. On the confirming call the cache is
-     * skipped, because a slot can be taken between the preview and the confirmation.
+     * neither read nor written: the check asks Easy!Appointments directly, because a slot
+     * can be taken between the preview and the confirmation.
      */
     protected function assertSlotOpen(EaClient $ea, array $provider, array $service, CarbonImmutable $start, bool $fresh): void
     {
         $date = $start->format('Y-m-d');
 
-        if ($fresh) {
-            $ea->forgetAvailability($provider['id'], $date);
-        }
-
-        $open = $ea->availability($provider['id'], $service['id'], $date);
+        $open = $ea->availability($provider['id'], $service['id'], $date, fresh: $fresh);
 
         if (! in_array($start->format('H:i'), $open, true)) {
             $nearest = collect($open)

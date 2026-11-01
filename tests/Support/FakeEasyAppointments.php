@@ -56,6 +56,9 @@ class FakeEasyAppointments
     /** Called with "METHOD /path" before each request is answered. */
     public ?\Closure $onRequest = null;
 
+    /** Called with "METHOD /path" right after an answer is made, before the server reads it. */
+    public ?\Closure $afterAnswer = null;
+
     /** "METHOD /path" => HTTP status: those requests fail with that status. */
     public array $failRequests = [];
 
@@ -104,7 +107,7 @@ class FakeEasyAppointments
             return Http::response(['message' => 'Unauthorized'], 401);
         }
 
-        return match (true) {
+        $response = match (true) {
             $path === '/services' => Http::response($this->services),
             $path === '/providers' => Http::response($this->providers),
             $path === '/settings' => Http::response(collect($this->settings)->map(fn ($v, $k) => ['name' => $k, 'value' => $v])->values()->all()),
@@ -120,6 +123,12 @@ class FakeEasyAppointments
             (bool) preg_match('#^/appointments/(\d+)$#', $path, $m) => $this->appointmentRoute($method, (int) $m[1], $request->data()),
             default => Http::response(['message' => 'Not found'], 404),
         };
+
+        if ($this->afterAnswer !== null) {
+            ($this->afterAnswer)("$method $path");
+        }
+
+        return $response;
     }
 
     public function addAppointment(array $attributes): array

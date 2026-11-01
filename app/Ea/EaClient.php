@@ -132,9 +132,9 @@ class EaClient
      *
      * @return list<string>
      */
-    public function availability(int $providerId, int $serviceId, string $date): array
+    public function availability(int $providerId, int $serviceId, string $date, bool $fresh = false): array
     {
-        return $this->availabilityMany([[$providerId, $serviceId, $date]])[0];
+        return $this->availabilityMany([[$providerId, $serviceId, $date]], cache: ! $fresh)[0];
     }
 
     /**
@@ -144,13 +144,18 @@ class EaClient
      * @param  list<array{0: int, 1: int, 2: string}>  $lookups
      * @return list<list<string>>
      */
-    public function availabilityMany(array $lookups): array
+    public function availabilityMany(array $lookups, bool $cache = true): array
     {
         $results = [];
         $missing = [];
+        $keys = [];
 
         foreach ($lookups as $i => [$providerId, $serviceId, $date]) {
-            $cached = Cache::get($this->availabilityKey($providerId, $serviceId, $date));
+            // The key (with the provider's current slot version) is taken once, before asking
+            // Easy!Appointments. If a booking bumps the version meanwhile, this answer lands
+            // under the old key and is never read, instead of passing stale times off as new.
+            $keys[$i] = $this->availabilityKey($providerId, $serviceId, $date);
+            $cached = $cache ? Cache::get($keys[$i]) : null;
             is_array($cached) ? $results[$i] = $cached : $missing[$i] = [$providerId, $serviceId, $date];
         }
 
@@ -185,7 +190,10 @@ class EaClient
                 }
 
                 $hours = array_values(array_filter((array) $response->json(), 'is_string'));
-                Cache::put($this->availabilityKey($providerId, $serviceId, $date), $hours, config('easyappointments.availability_cache_seconds'));
+                if ($cache) {
+                    Cache::put($keys[$i], $hours, config('easyappointments.availability_cache_seconds'));
+                }
+
                 $results[$i] = $hours;
             }
         }
