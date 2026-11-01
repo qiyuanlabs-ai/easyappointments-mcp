@@ -25,10 +25,17 @@ class LoginController extends Controller
 
         // Counted per IP and, separately, per account, so guesses spread over many IPs
         // still run into a limit for the account they target.
-        $limits = [
-            'login:'.$request->ip() => [10, 60],
-            'login-account:'.hash('sha256', mb_strtolower($credentials['email'])) => [10, 600],
-        ];
+        $email = mb_strtolower($credentials['email']);
+        $limits = ['login:'.$request->ip() => [10, 60]];
+
+        // A public demo shows its login on the home page, so guessing it gains nothing, and a
+        // per-account limit would only let strangers lock everyone else out of the demo.
+        if ($email !== mb_strtolower((string) config('app.demo_login.email'))) {
+            $limits['login-account:'.hash('sha256', $email)] = [
+                config('easyappointments.login_attempts_per_account'),
+                config('easyappointments.login_lockout_seconds'),
+            ];
+        }
 
         foreach ($limits as $key => [$attempts, $seconds]) {
             if (RateLimiter::tooManyAttempts($key, $attempts)) {

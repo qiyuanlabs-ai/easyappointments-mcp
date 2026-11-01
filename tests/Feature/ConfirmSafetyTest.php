@@ -140,12 +140,32 @@ class ConfirmSafetyTest extends TestCase
         $booking = ['new_customer' => ['first_name' => 'Taylor', 'last_name' => 'Test', 'email' => 'taylor@example.test']] + $this->booking;
         unset($booking['customer_id']);
         $token = $this->preview($booking);
-        $this->ea->refuseAppointmentsWith = 500;
+        $this->ea->refuseAppointmentsWith = 422;
 
-        $this->confirm($booking, $token, 'key-refused-1')->assertHasErrors(['internal error']);
+        $this->confirm($booking, $token, 'key-refused-1')->assertHasErrors(['refused POST /appointments']);
 
         $this->assertSame(['POST /customers', 'POST /appointments', 'DELETE /customers/3'], $this->ea->writes());
         $this->assertSame([1, 2], array_keys($this->ea->customers));
+        $this->assertSame(0, IdempotencyKey::count(), 'Nothing changed, so the key is free again.');
+    }
+
+    public function test_after_a_server_error_the_new_customer_and_the_key_stay(): void
+    {
+        $booking = ['new_customer' => ['first_name' => 'Taylor', 'last_name' => 'Test', 'email' => 'taylor@example.test']] + $this->booking;
+        unset($booking['customer_id']);
+        $token = $this->preview($booking);
+        // A proxy in front of Easy!Appointments answers 502 although the booking was saved.
+        $this->ea->saveAppointmentsButAnswer = 502;
+
+        $this->confirm($booking, $token, 'key-proxy-01')->assertHasErrors(['not clear whether the change was made', 'list_appointments']);
+
+        $this->assertSame(['POST /customers', 'POST /appointments'], $this->ea->writes(), 'The customer is not deleted.');
+        $this->assertCount(1, $this->ea->appointments);
+        $this->assertArrayHasKey(3, $this->ea->customers);
+        $this->assertFalse(IdempotencyKey::sole()->isCompleted(), 'The key stays claimed, so a retry with it cannot book again.');
+
+        $this->confirm($booking, $token, 'key-proxy-01')->assertHasErrors(['still being processed']);
+        $this->assertCount(1, $this->ea->appointments);
     }
 
     public function test_a_booking_for_a_new_customer_does_not_start_without_budget_for_all_its_requests(): void

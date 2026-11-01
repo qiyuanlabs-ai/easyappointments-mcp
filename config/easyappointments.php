@@ -25,6 +25,12 @@ return [
     // How long a preview's confirmation_token stays valid.
     'confirmation_minutes' => (int) env('MCP_CONFIRMATION_MINUTES', 10),
 
+    // Failed sign-ins allowed per account (from any IP) before it must wait, and for how long.
+    // Each IP is also limited to 10 failed sign-ins a minute. A public demo account is exempt
+    // from the per-account limit, since its password is published anyway.
+    'login_attempts_per_account' => (int) env('MCP_LOGIN_ATTEMPTS_PER_ACCOUNT', 10),
+    'login_lockout_seconds' => (int) env('MCP_LOGIN_LOCKOUT_SECONDS', 600),
+
     // How long a change waits for another change to the same provider and day to finish.
     'slot_lock_wait_seconds' => (int) env('MCP_SLOT_LOCK_WAIT_SECONDS', 15),
 

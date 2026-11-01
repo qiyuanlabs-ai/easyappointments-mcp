@@ -40,4 +40,20 @@ class LoginTest extends TestCase
         $this->post('/login', ['email' => 'someone@example.test', 'password' => 'wrong'])
             ->assertSessionHasErrors(['email' => 'Too many attempts. Try again in 1 minute.']);
     }
+
+    public function test_strangers_cannot_lock_the_published_demo_account(): void
+    {
+        config(['app.demo_login' => ['email' => 'frontdesk@demo.test', 'password' => 'demo-password-1']]);
+        $user = User::factory()->create(['email' => 'frontdesk@demo.test', 'password' => 'demo-password-1']);
+
+        foreach (range(1, 25) as $i) {
+            $this->withServerVariables(['REMOTE_ADDR' => "203.0.113.$i"])
+                ->post('/login', ['email' => 'frontdesk@demo.test', 'password' => 'wrong']);
+        }
+
+        $this->withServerVariables(['REMOTE_ADDR' => '198.51.100.7'])
+            ->post('/login', ['email' => 'frontdesk@demo.test', 'password' => 'demo-password-1'])
+            ->assertRedirect(route('dashboard'));
+        $this->assertAuthenticatedAs($user);
+    }
 }

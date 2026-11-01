@@ -128,9 +128,10 @@ class BookAppointment extends WriteTool
                     'notes' => $notes,
                 ]);
             } catch (EaApiException $e) {
-                // Easy!Appointments answered and did not book, so remove the customer made for this
-                // booking. If the answer was lost, the booking may exist, so the customer stays.
-                if ($createdCustomer && $e->status !== null) {
+                // Only a clear refusal (4xx) means nothing was booked, so only then remove the
+                // customer made for this booking. After no answer or a server error the booking
+                // may exist, and deleting its customer could take the booking with it.
+                if ($createdCustomer && ! $e->outcomeUnknown()) {
                     try {
                         $ea->deleteCustomer($customer['id']);
                     } catch (EaApiException) {

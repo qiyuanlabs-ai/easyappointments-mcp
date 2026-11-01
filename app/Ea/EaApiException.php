@@ -15,6 +15,16 @@ class EaApiException extends RuntimeException
         parent::__construct($message);
     }
 
+    /**
+     * True when Easy!Appointments may have made the change even though the call failed: no
+     * answer arrived, or a server error came back (a proxy in front of it can answer 502
+     * after the change was saved). Only a 4xx is a clear refusal.
+     */
+    public function outcomeUnknown(): bool
+    {
+        return $this->status === null || $this->status >= 500;
+    }
+
     public static function fromStatus(int $status, string $method, string $path): self
     {
         return new self(match (true) {

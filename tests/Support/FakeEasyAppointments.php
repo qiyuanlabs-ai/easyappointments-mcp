@@ -50,6 +50,9 @@ class FakeEasyAppointments
     /** When set, creating an appointment fails with this HTTP status and saves nothing. */
     public ?int $refuseAppointmentsWith = null;
 
+    /** When set, creating an appointment saves it but the answer is this HTTP status, as from a proxy. */
+    public ?int $saveAppointmentsButAnswer = null;
+
     /** Called with "METHOD /path" before each request is answered. */
     public ?\Closure $onRequest = null;
 
@@ -197,6 +200,12 @@ class FakeEasyAppointments
     {
         if ($this->refuseAppointmentsWith !== null) {
             return Http::response(['message' => 'Failure'], $this->refuseAppointmentsWith);
+        }
+
+        if ($this->saveAppointmentsButAnswer !== null) {
+            $this->addAppointment($data);
+
+            return Http::response(['message' => 'Bad gateway'], $this->saveAppointmentsButAnswer);
         }
 
         $appointment = $this->addAppointment($data);

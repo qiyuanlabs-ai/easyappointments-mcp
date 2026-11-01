@@ -112,14 +112,14 @@ abstract class WriteTool extends EaTool
                 try {
                     return ($change->execute)();
                 } catch (EaApiException $e) {
-                    // No answer at all: Easy!Appointments may still have made the change.
-                    $outcomeUnknown = $e->status === null;
+                    // No answer or a server error: Easy!Appointments may still have made the change.
+                    $outcomeUnknown = $e->outcomeUnknown();
                     throw $e;
                 }
             });
         } catch (Throwable $e) {
             if ($outcomeUnknown) {
-                throw new ToolFailure('Easy!Appointments did not answer, so it is not clear whether the change was made. Check with list_appointments before trying again with a new idempotency_key.');
+                throw new ToolFailure('Easy!Appointments did not confirm the change (no answer, or a server error), so it is not clear whether the change was made. Check with list_appointments before trying again with a new idempotency_key.');
             }
 
             $claim->delete(); // Nothing changed, so the key may be used again.
